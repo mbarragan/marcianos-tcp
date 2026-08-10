@@ -1,0 +1,15 @@
+plugins {
+    id 'java-library'
+}
+
+def gdxVersion = '1.13.1'
+
+dependencies {
+    api "com.badlogicgames.gdx:gdx:$gdxVersion"
+}
+
+// Keep the presentation text in the project-level resources folder as the
+// single source of truth, while also making it available inside the game jar.
+processResources {
+    from(rootProject.file('resources'))
+}

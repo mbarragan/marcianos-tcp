@@ -1,0 +1,40 @@
+allprojects {
+    group = 'local.marcianos'
+    version = findProperty('appVersion') ?: '2.0.2'
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(8)
+        }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+}
+
+tasks.register('packageWindowsInstaller', Exec) {
+    group = 'distribution'
+    description = 'Builds the smart Windows installer executable.'
+    workingDir = rootDir
+    commandLine 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+        "& '${new File(rootDir, 'tools/package-windows.ps1').absolutePath}'; exit \$LASTEXITCODE"
+}
+
+tasks.register('packageWindowsPortable', Exec) {
+    group = 'distribution'
+    description = 'Builds the Windows portable folder and zip package.'
+    workingDir = rootDir
+    commandLine 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+        "& '${new File(rootDir, 'tools/package-windows-portable.ps1').absolutePath}'; exit \$LASTEXITCODE"
+}
+
+tasks.register('packageWindowsAll') {
+    group = 'distribution'
+    description = 'Builds both Windows installer and portable packages.'
+    dependsOn 'packageWindowsInstaller', 'packageWindowsPortable'
+}

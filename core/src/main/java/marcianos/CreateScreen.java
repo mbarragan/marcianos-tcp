@@ -1,0 +1,146 @@
+package marcianos;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
+import com.badlogic.gdx.ScreenAdapter;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.GlyphLayout;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+
+/** Create screen for host-mode stub session setup. */
+public final class CreateScreen extends ScreenAdapter {
+    private enum UiState {
+        READY,
+        STARTING,
+        ERROR
+    }
+
+    private final MarcianosGame game;
+    private final GlyphLayout layout = new GlyphLayout();
+    private SpriteBatch batch;
+    private BitmapFont titleFont;
+    private BitmapFont bodyFont;
+    private String host = "localhost";
+    private String playerName = "Host";
+    private int port = 7777;
+    private UiState uiState = UiState.READY;
+    private String statusMessage = "Press H to edit bind host, P to edit port, N for name.";
+    private float startTimer;
+
+    public CreateScreen(MarcianosGame game) {
+        this.game = game;
+    }
+
+    @Override public void show() {
+        batch = new SpriteBatch();
+        titleFont = new BitmapFont();
+        titleFont.getData().setScale(2.2f);
+        bodyFont = new BitmapFont();
+        bodyFont.getData().setScale(1.15f);
+    }
+
+    @Override public void render(float delta) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
+            game.returnToPresentation();
+            return;
+        }
+
+        if (uiState == UiState.STARTING) {
+            startTimer -= delta;
+            if (startTimer <= 0f) {
+                game.startOnlineGame(new OnlineSessionConfig(true, host, port, playerName));
+                return;
+            }
+        } else {
+            handleEditingInput();
+            if (Gdx.input.isKeyJustPressed(Input.Keys.ENTER)) attemptStart();
+        }
+
+        Gdx.gl.glClearColor(.025f, .035f, .07f, 1f);
+        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+
+        batch.begin();
+        float centerY = Gdx.graphics.getHeight() / 2f;
+        drawCentered(titleFont, "CREATE ONLINE GAME", Color.GREEN, centerY + 140f);
+        drawCentered(bodyFont, "Bind host: " + host, Color.WHITE, centerY + 70f);
+        drawCentered(bodyFont, "Port: " + port, Color.WHITE, centerY + 35f);
+        drawCentered(bodyFont, "Player: " + playerName, Color.WHITE, centerY);
+        drawCentered(bodyFont, "ENTER create | H edit host | P edit port | N edit name", Color.CYAN, centerY - 55f);
+        drawCentered(bodyFont, statusMessage, uiState == UiState.ERROR ? Color.SALMON : Color.LIGHT_GRAY, centerY - 95f);
+        drawCentered(bodyFont, "ESC return to presentation", Color.RED, centerY - 135f);
+        batch.end();
+    }
+
+    private void handleEditingInput() {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.H)) {
+            Gdx.input.getTextInput(new Input.TextInputListener() {
+                @Override public void input(String text) {
+                    String value = text == null ? "" : text.trim();
+                    if (!value.isEmpty()) host = value;
+                }
+
+                @Override public void canceled() {
+                }
+            }, "Create Bind Host", host, "e.g. localhost");
+            return;
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.P)) {
+            Gdx.input.getTextInput(new Input.TextInputListener() {
+                @Override public void input(String text) {
+                    try {
+                        int parsed = Integer.parseInt(text.trim());
+                        if (parsed > 0 && parsed <= 65535) port = parsed;
+                    } catch (RuntimeException ignored) {
+                        uiState = UiState.ERROR;
+                        statusMessage = "Invalid port. Use a value between 1 and 65535.";
+                    }
+                }
+
+                @Override public void canceled() {
+                }
+            }, "Create Port", Integer.toString(port), "e.g. 7777");
+            return;
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.N)) {
+            Gdx.input.getTextInput(new Input.TextInputListener() {
+                @Override public void input(String text) {
+                    String value = text == null ? "" : text.trim();
+                    if (!value.isEmpty()) playerName = value;
+                }
+
+                @Override public void canceled() {
+                }
+            }, "Host Player Name", playerName, "visible name");
+        }
+    }
+
+    private void attemptStart() {
+        if (host.trim().isEmpty()) {
+            uiState = UiState.ERROR;
+            statusMessage = "Bind host is required.";
+            return;
+        }
+        if (port < 1 || port > 65535) {
+            uiState = UiState.ERROR;
+            statusMessage = "Port must be between 1 and 65535.";
+            return;
+        }
+        uiState = UiState.STARTING;
+        statusMessage = "Creating lobby (stub)...";
+        startTimer = 0.25f;
+    }
+
+    private void drawCentered(BitmapFont font, String text, Color color, float y) {
+        font.setColor(color);
+        layout.setText(font, text);
+        font.draw(batch, text, (Gdx.graphics.getWidth() - layout.width) / 2f, y);
+    }
+
+    @Override public void dispose() {
+        if (batch != null) batch.dispose();
+        if (titleFont != null) titleFont.dispose();
+        if (bodyFont != null) bodyFont.dispose();
+    }
+}
