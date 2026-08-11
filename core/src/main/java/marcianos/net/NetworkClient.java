@@ -58,6 +58,13 @@ public final class NetworkClient {
         }
     }
 
+    public void requestRespawn() {
+        if (state != ConnectionState.CONNECTED || writer == null) return;
+        synchronized (writer) {
+            writer.println(TcpProtocol.respawnMessage());
+        }
+    }
+
     public void update(float delta) {
         // Network work is done by background threads. The render loop polls latest state.
     }

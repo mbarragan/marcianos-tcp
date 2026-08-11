@@ -117,6 +117,17 @@ public final class PlayerManager {
         externalInput = InputCommand.none();
     }
 
+    public void resetForOnlineRespawn(int lives) {
+        ships = Math.max(0, lives - 1);
+        inputEnabled = true;
+        respawnEnabled = true;
+        fireCooldown = 0f;
+        bullets.clear();
+        currentInput = InputCommand.none();
+        externalInput = InputCommand.none();
+        respawn();
+    }
+
     /** Applies a force for one simulation step: F = m · a. */
     public void applyForce(Vector2 force, float delta) {
         if (!alive) return;

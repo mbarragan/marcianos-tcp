@@ -18,11 +18,12 @@ public final class RemoteSnapshot {
         private final float vx;
         private final float vy;
         private final int hyperspaceAttempts;
+        private final String playerName;
         private final boolean localPlayer;
 
         public PlayerState(int playerId, float x, float y, float angle, float shield,
                            int lives, boolean shieldActive, boolean alive,
-                   float vx, float vy, int hyperspaceAttempts,
+               float vx, float vy, int hyperspaceAttempts, String playerName,
                    boolean localPlayer) {
             this.playerId = playerId;
             this.x = x;
@@ -35,6 +36,7 @@ public final class RemoteSnapshot {
             this.vx = vx;
             this.vy = vy;
             this.hyperspaceAttempts = hyperspaceAttempts;
+            this.playerName = playerName;
             this.localPlayer = localPlayer;
         }
 
@@ -49,6 +51,7 @@ public final class RemoteSnapshot {
         public float vx() { return vx; }
         public float vy() { return vy; }
         public int hyperspaceAttempts() { return hyperspaceAttempts; }
+        public String playerName() { return playerName; }
         public boolean localPlayer() { return localPlayer; }
     }
 

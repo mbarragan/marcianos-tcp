@@ -9,6 +9,7 @@ import marcianos.InputCommand;
 public final class TcpProtocol {
     public static final String JOIN = "JOIN";
     public static final String INPUT = "INPUT";
+    public static final String RESPAWN = "RESPAWN";
     public static final String WELCOME = "WELCOME";
     public static final String SNAP = "SNAP";
     public static final String ERROR = "ERROR";
@@ -22,6 +23,14 @@ public final class TcpProtocol {
         return JOIN + "|" + safe;
     }
 
+    public static String parseJoinName(String line) {
+        String[] parts = line.split("\\|", 2);
+        if (parts.length != 2 || !JOIN.equals(parts[0])) return "Player";
+        String safe = parts[1].trim();
+        if (safe.isEmpty()) return "Player";
+        return sanitizeName(safe);
+    }
+
     public static String inputMessage(InputCommand input) {
         return INPUT + "|"
             + bit(input.rotateLeft()) + "|"
@@ -30,6 +39,10 @@ public final class TcpProtocol {
             + bit(input.fire()) + "|"
             + bit(input.shield()) + "|"
             + bit(input.hyperspace());
+    }
+
+    public static String respawnMessage() {
+        return RESPAWN;
     }
 
     public static ParsedInput parseInput(String line) {
@@ -75,7 +88,7 @@ public final class TcpProtocol {
         if (parts.length >= 3 && !parts[2].trim().isEmpty()) {
             String[] entries = parts[2].split(";");
             for (String entry : entries) {
-                String[] p = entry.split(",", 11);
+                String[] p = entry.split(",", 12);
                 if (p.length < 5) continue;
                 try {
                     int id = Integer.parseInt(p[0]);
@@ -89,6 +102,7 @@ public final class TcpProtocol {
                     float vx = 0f;
                     float vy = 0f;
                     int hyperspaceAttempts = 0;
+                    String playerName = "P" + id;
                     if (p.length == 6) {
                         // Legacy payload: id,x,y,angle,shield,shieldActive
                         shieldActive = parseBit(p[5]);
@@ -100,10 +114,11 @@ public final class TcpProtocol {
                         if (p.length >= 9) vx = Float.parseFloat(p[8]);
                         if (p.length >= 10) vy = Float.parseFloat(p[9]);
                         if (p.length >= 11) hyperspaceAttempts = Integer.parseInt(p[10]);
+                        if (p.length >= 12 && !p[11].isEmpty()) playerName = p[11];
                     }
                     players.add(new RemoteSnapshot.PlayerState(
                         id, x, y, angle, shield, lives, shieldActive,
-                        alive, vx, vy, hyperspaceAttempts, id == localPlayerId));
+                        alive, vx, vy, hyperspaceAttempts, playerName, id == localPlayerId));
                 } catch (RuntimeException ignored) {
                 }
             }
@@ -195,7 +210,8 @@ public final class TcpProtocol {
                 .append(bit(p.alive)).append(',')
                 .append(format(p.vx)).append(',')
                 .append(format(p.vy)).append(',')
-                .append(p.hyperspaceAttempts);
+                .append(p.hyperspaceAttempts).append(',')
+                .append(sanitizeName(p.playerName));
         }
 
         sb.append('|');
@@ -262,6 +278,13 @@ public final class TcpProtocol {
         return "1".equals(value);
     }
 
+    private static String sanitizeName(String value) {
+        if (value == null) return "Player";
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) return "Player";
+        return trimmed.replace('|', '_').replace(';', '_').replace(',', '_');
+    }
+
     public static final class ParsedInput {
         public final boolean rotateLeft;
         public final boolean rotateRight;
@@ -293,11 +316,12 @@ public final class TcpProtocol {
         public final float vx;
         public final float vy;
         public final int hyperspaceAttempts;
+        public final String playerName;
 
         public SnapshotPlayer(int playerId, float x, float y, float angle,
                               float shield, int lives, boolean shieldActive,
                       boolean alive, float vx, float vy,
-                      int hyperspaceAttempts) {
+                  int hyperspaceAttempts, String playerName) {
             this.playerId = playerId;
             this.x = x;
             this.y = y;
@@ -309,6 +333,7 @@ public final class TcpProtocol {
             this.vx = vx;
             this.vy = vy;
             this.hyperspaceAttempts = hyperspaceAttempts;
+            this.playerName = sanitizeName(playerName);
         }
     }
 

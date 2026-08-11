@@ -26,6 +26,7 @@ import marcianos.net.RemoteSnapshot;
 public final class OnlineGameScreen extends ScreenAdapter {
     private static final float INFO_WIDTH = 210f;
     private static final float INFO_HEIGHT = 280f;
+    private static final String MESSAGE_TO_START_AGAIN = "Press to start again";
 
     private final MarcianosGame game;
     private final OnlineSessionConfig config;
@@ -40,9 +41,12 @@ public final class OnlineGameScreen extends ScreenAdapter {
     private SpriteBatch batch;
     private BitmapFont titleFont;
     private BitmapFont bodyFont;
+    private BitmapFont messageFont;
+    private BitmapFont otherPlayersFont;
     private NetworkClient networkClient;
     private RemoteSnapshot snapshot;
     private long lastProcessedExplosionTick = -1L;
+    private boolean gameOver;
 
     public OnlineGameScreen(MarcianosGame game, OnlineSessionConfig config) {
         this.game = game;
@@ -62,6 +66,10 @@ public final class OnlineGameScreen extends ScreenAdapter {
         titleFont.getData().setScale(1.45f);
         bodyFont = new BitmapFont();
         bodyFont.getData().setScale(1.0f);
+        messageFont = new BitmapFont();
+        messageFont.getData().setScale(2.2f);
+        otherPlayersFont = new BitmapFont();
+        otherPlayersFont.getData().setScale(1.1f);
         for (int i = 0; i < 120; i++) {
             stars.add(new Vector2(MathUtils.random(GameScreen.WORLD_WIDTH), MathUtils.random(GameScreen.WORLD_HEIGHT)));
         }
@@ -92,6 +100,11 @@ public final class OnlineGameScreen extends ScreenAdapter {
         if (latest != null) {
             snapshot = latest;
             ingestSnapshotExplosionsIfNeeded(latest);
+            updateGameOverState();
+        }
+        if (gameOver && hasStartInput()) {
+            restartOnlineMatch();
+            return;
         }
         for (ExplosionEffect explosion : explosions) explosion.update(Math.min(delta, 1f / 30f));
         for (int i = explosions.size - 1; i >= 0; i--) {
@@ -102,6 +115,47 @@ public final class OnlineGameScreen extends ScreenAdapter {
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
         drawWorld();
         drawHud();
+        drawGameMessage();
+    }
+
+    private void updateGameOverState() {
+        RemoteSnapshot.PlayerState localPlayer = findLocalPlayer();
+        gameOver = localPlayer != null && localPlayer.lives() <= 0;
+    }
+
+    private boolean hasStartInput() {
+        for (int key = 0; key <= Input.Keys.MAX_KEYCODE; key++) {
+            if (Gdx.input.isKeyJustPressed(key)) return true;
+        }
+        for (int button = 0; button < 5; button++) {
+            if (Gdx.input.isButtonJustPressed(button)) return true;
+        }
+        return false;
+    }
+
+    private void drawGameMessage() {
+        if (!gameOver) return;
+        float gameWidth = Gdx.graphics.getWidth() - INFO_WIDTH;
+        float centerX = gameWidth / 2f;
+        float centerY = Gdx.graphics.getHeight() / 2f;
+        batch.setProjectionMatrix(hudCamera.combined);
+        batch.begin();
+        messageFont.setColor(Color.RED);
+        layout.setText(messageFont, "GAME OVER");
+        messageFont.draw(batch, "GAME OVER", centerX - layout.width / 2f, centerY + 30f);
+        layout.setText(messageFont, MESSAGE_TO_START_AGAIN);
+        messageFont.draw(batch, MESSAGE_TO_START_AGAIN,
+            centerX - layout.width / 2f, centerY - 90f);
+        batch.end();
+    }
+
+    private void restartOnlineMatch() {
+        explosions.clear();
+        gameOver = false;
+        if (networkClient != null) {
+            networkClient.requestRespawn();
+            return;
+        }
     }
 
     @Override public void resize(int width, int height) {
@@ -277,7 +331,7 @@ public final class OnlineGameScreen extends ScreenAdapter {
         batch.setProjectionMatrix(hudCamera.combined);
         batch.begin();
         if (localPlayer == null) {
-            drawLeft(bodyFont, "Esperando snapshot del jugador local...", Color.LIGHT_GRAY,
+            drawLeft(bodyFont, "Waiting for local player snapshot...", Color.LIGHT_GRAY,
                 panelX + 18f, topY + 160f);
         } else {
             drawLeft(bodyFont, "PLAYER " + localPlayer.playerId(), Color.WHITE, panelX + 18f, topY + 300f);
@@ -287,35 +341,55 @@ public final class OnlineGameScreen extends ScreenAdapter {
         }
 
         float summaryY = topY - 34f;
-        drawLeft(bodyFont, "OTROS JUGADORES", Color.LIGHT_GRAY, panelX + 18f, summaryY);
+        drawLeft(otherPlayersFont, "OTHER PLAYERS", Color.LIGHT_GRAY, panelX + 18f, summaryY);
         List<RemoteSnapshot.PlayerState> orderedPlayers = orderedPlayers();
+        ArrayList<OpponentHudRow> opponentRows = new ArrayList<>();
         int row = 0;
         for (RemoteSnapshot.PlayerState player : orderedPlayers) {
             if (player.localPlayer()) continue;
             if (row >= 9) {
-                drawLeft(bodyFont, "...", Color.LIGHT_GRAY, panelX + 18f, summaryY - 22f - row * 18f);
+                drawLeft(otherPlayersFont, "...", Color.LIGHT_GRAY, panelX + 18f, summaryY - 28f - row * 28f);
                 break;
             }
-            String text = "P" + player.playerId() + ": " + player.lives() + " vidas";
-            Color lineColor = player.lives() > 0 ? Color.WHITE : Color.SALMON;
-            drawLeft(bodyFont, text, lineColor, panelX + 18f, summaryY - 22f - row * 18f);
+            float rowY = summaryY - 28f - row * 28f;
+            Color lineColor = desktopColorFor(player.playerId());
+            String shortName = abbreviatePlayerName(player);
+            drawLeft(otherPlayersFont, shortName, lineColor, panelX + 18f, rowY);
+            opponentRows.add(new OpponentHudRow(player, panelX + 100f, rowY - 4f));
             row++;
         }
-        if (row == 0) drawLeft(bodyFont, "Sin otros jugadores conectados", Color.LIGHT_GRAY,
+        if (row == 0) drawLeft(otherPlayersFont, "No other players connected", Color.LIGHT_GRAY,
             panelX + 18f, summaryY - 22f);
 
         String networkSummary = "NET " + role + "  " + networkClient.state()
             + "  T" + tick + "  P" + players + "/16";
         drawLeft(bodyFont, networkSummary, Color.DARK_GRAY, panelX + 18f, 86f);
-        drawLeft(bodyFont, "Jugador: " + config.playerName(), Color.DARK_GRAY, panelX + 18f, 66f);
+        drawLeft(bodyFont, "Player: " + config.playerName(), Color.DARK_GRAY, panelX + 18f, 66f);
 
         if (!networkClient.lastError().isEmpty()) {
             drawLeft(bodyFont, "Error: " + networkClient.lastError(), Color.SALMON, panelX + 18f, 24f);
-            drawLeft(bodyFont, "ESC volver", Color.SALMON, panelX + 18f, 42f);
+            drawLeft(bodyFont, "ESC return", Color.SALMON, panelX + 18f, 42f);
         } else {
-            drawLeft(bodyFont, "ESC volver", Color.SALMON, panelX + 18f, 42f);
+            drawLeft(bodyFont, "ESC return", Color.SALMON, panelX + 18f, 42f);
         }
         batch.end();
+
+        if (!opponentRows.isEmpty()) {
+            renderer.setProjectionMatrix(hudCamera.combined);
+            renderer.begin(ShapeRenderer.ShapeType.Line);
+            for (OpponentHudRow rowData : opponentRows) {
+                drawShipIcons(rowData.iconsX, rowData.iconsY, rowData.player);
+            }
+            renderer.end();
+        }
+    }
+
+    private String abbreviatePlayerName(RemoteSnapshot.PlayerState player) {
+        String base = player.playerName();
+        if (base == null || base.trim().isEmpty()) base = "P" + player.playerId();
+        base = base.trim();
+        if (base.length() <= 8) return base;
+        return base.substring(0, 8);
     }
 
     private RemoteSnapshot.PlayerState findLocalPlayer() {
@@ -363,6 +437,18 @@ public final class OnlineGameScreen extends ScreenAdapter {
         return colorFor(playerId, false);
     }
 
+    private static final class OpponentHudRow {
+        private final RemoteSnapshot.PlayerState player;
+        private final float iconsX;
+        private final float iconsY;
+
+        private OpponentHudRow(RemoteSnapshot.PlayerState player, float iconsX, float iconsY) {
+            this.player = player;
+            this.iconsX = iconsX;
+            this.iconsY = iconsY;
+        }
+    }
+
     private void drawLeft(BitmapFont font, String text, Color color, float x, float y) {
         font.setColor(color);
         layout.setText(font, text);
@@ -392,5 +478,7 @@ public final class OnlineGameScreen extends ScreenAdapter {
         if (batch != null) batch.dispose();
         if (titleFont != null) titleFont.dispose();
         if (bodyFont != null) bodyFont.dispose();
+        if (messageFont != null) messageFont.dispose();
+        if (otherPlayersFont != null) otherPlayersFont.dispose();
     }
 }

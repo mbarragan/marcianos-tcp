@@ -319,7 +319,8 @@ public final class LocalTcpGameServer {
                     player.isAlive(),
                     velocity.x,
                     velocity.y,
-                    player.getHyperspaceAttempts()));
+                    player.getHyperspaceAttempts(),
+                    p.playerName));
                 for (Bullet bullet : player.getBullets()) {
                     bullets.add(new TcpProtocol.SnapshotBullet(
                         p.playerId,
@@ -376,6 +377,8 @@ public final class LocalTcpGameServer {
                         handleJoin(line);
                     } else if (line.startsWith(TcpProtocol.INPUT + "|")) {
                         handleInput(line);
+                    } else if (TcpProtocol.RESPAWN.equals(line)) {
+                        handleRespawn();
                     }
                 }
             } catch (IOException ignored) {
@@ -392,6 +395,7 @@ public final class LocalTcpGameServer {
 
         private void handleJoin(String line) {
             if (playerId > 0) return;
+            String playerName = TcpProtocol.parseJoinName(line);
             synchronized (players) {
                 if (players.size() >= MAX_PLAYERS) {
                     send(TcpProtocol.errorMessage("Server full"));
@@ -399,7 +403,7 @@ public final class LocalTcpGameServer {
                     return;
                 }
                 playerId = nextPlayerId++;
-                players.put(playerId, new ServerPlayerState(playerId));
+                players.put(playerId, new ServerPlayerState(playerId, playerName));
             }
             send(TcpProtocol.welcomeMessage(playerId));
         }
@@ -411,6 +415,17 @@ public final class LocalTcpGameServer {
             synchronized (players) {
                 ServerPlayerState state = players.get(playerId);
                 if (state != null) state.input = input;
+            }
+        }
+
+        private void handleRespawn() {
+            if (playerId <= 0) return;
+            synchronized (players) {
+                ServerPlayerState state = players.get(playerId);
+                if (state == null) return;
+                state.player.resetForOnlineRespawn(4);
+                state.player.setExternalInput(InputCommand.none());
+                state.input = TcpProtocol.emptyInput();
             }
         }
 
@@ -430,11 +445,13 @@ public final class LocalTcpGameServer {
 
     private static final class ServerPlayerState {
         private final int playerId;
+        private final String playerName;
         private final PlayerManager player;
         private TcpProtocol.ParsedInput input = TcpProtocol.emptyInput();
 
-        private ServerPlayerState(int playerId) {
+        private ServerPlayerState(int playerId, String playerName) {
             this.playerId = playerId;
+            this.playerName = playerName;
             this.player = new PlayerManager(colorFor(playerId), 0, 0, 0, 0, 0, 0, 4);
             this.player.setExternalInput(InputCommand.none());
         }
