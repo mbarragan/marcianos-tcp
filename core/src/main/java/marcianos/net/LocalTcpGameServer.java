@@ -1,5 +1,7 @@
 package marcianos.net;
 
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.math.Vector2;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -9,28 +11,23 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import marcianos.Asteroid;
+import marcianos.Bullet;
+import marcianos.InputCommand;
+import marcianos.PlayerManager;
+import marcianos.ShipExplosionSink;
 
-/** Lightweight localhost TCP server used to validate the online client flow. */
+/** Lightweight localhost TCP server used to validate online simulation with desktop rules. */
 public final class LocalTcpGameServer {
     private static final int MAX_PLAYERS = 16;
-    private static final float WORLD_WIDTH = 1710f;
-    private static final float WORLD_HEIGHT = 1000f;
-    private static final float PLAYER_RADIUS = 16f;
     private static final float SHIP_COLLISION_DISTANCE = 32f;
     private static final float BULLET_HIT_DISTANCE = 18f;
-    private static final float BULLET_SPEED = 8f * 60f;
-    private static final float BULLET_LIFE = 4.2f;
-    private static final float ASTEROID_MIN_RADIUS = 14f;
-    private static final float ASTEROID_MAX_RADIUS = 44f;
-    private static final float ASTEROID_SMALL_MAX_RADIUS = 23f;
-    private static final float ASTEROID_MEDIUM_MIN_RADIUS = 24f;
-    private static final float ASTEROID_MEDIUM_MAX_RADIUS = 33f;
-    private static final float ASTEROID_MIN_SPEED = 20f;
-    private static final float ASTEROID_MAX_SPEED = 45f;
+    private static final float ASTEROID_APPEARANCE_TIME = 10f;
     private static final float ASTEROID_SPAWN_INTERVAL = 20f;
     private static final Map<Integer, LocalTcpGameServer> RUNNING = new ConcurrentHashMap<>();
 
@@ -47,9 +44,29 @@ public final class LocalTcpGameServer {
     }
 
     private final int port;
-    private final List<ClientConnection> clients = Collections.synchronizedList(new ArrayList<ClientConnection>());
+    private final List<ClientConnection> clients =
+        Collections.synchronizedList(new ArrayList<ClientConnection>());
     private final Map<Integer, ServerPlayerState> players = new HashMap<>();
-    private final List<ServerAsteroidState> asteroids = new ArrayList<>();
+    private final List<Asteroid> asteroids = new ArrayList<>();
+    private final List<TcpProtocol.SnapshotExplosion> pendingExplosions = new ArrayList<>();
+    private final ShipExplosionSink explosionSink = new ShipExplosionSink() {
+        @Override public void addShipExplosion(float x, float y, Color color, float angle,
+                                               Vector2 velocity, boolean slowFragments) {
+            pendingExplosions.add(new TcpProtocol.SnapshotExplosion(
+                true,
+                x,
+                y,
+                color.r,
+                color.g,
+                color.b,
+                color.a,
+                angle + 90f,
+                velocity.x,
+                velocity.y,
+                0f,
+                slowFragments));
+        }
+    };
 
     private volatile boolean running;
     private ServerSocket serverSocket;
@@ -57,7 +74,8 @@ public final class LocalTcpGameServer {
     private Thread tickThread;
     private int nextPlayerId = 1;
     private long tick;
-    private float asteroidSpawnTimer;
+    private float elapsedTime;
+    private float nextAsteroidAppearanceTime = ASTEROID_APPEARANCE_TIME;
 
     private LocalTcpGameServer(int port) {
         this.port = port;
@@ -66,12 +84,15 @@ public final class LocalTcpGameServer {
     private void start() throws IOException {
         serverSocket = new ServerSocket(port);
         synchronized (players) {
+            players.clear();
             asteroids.clear();
-            for (int i = 0; i < 10; i++) asteroids.add(ServerAsteroidState.large());
-            for (int i = 0; i < 5; i++) asteroids.add(ServerAsteroidState.medium());
+            pendingExplosions.clear();
+            tick = 0L;
+            elapsedTime = 0f;
+            nextAsteroidAppearanceTime = ASTEROID_APPEARANCE_TIME;
         }
-        asteroidSpawnTimer = ASTEROID_SPAWN_INTERVAL;
         running = true;
+
         acceptThread = new Thread(new Runnable() {
             @Override public void run() {
                 acceptLoop();
@@ -104,6 +125,7 @@ public final class LocalTcpGameServer {
         synchronized (players) {
             players.clear();
             asteroids.clear();
+            pendingExplosions.clear();
         }
     }
 
@@ -131,7 +153,7 @@ public final class LocalTcpGameServer {
             broadcastSnapshot();
             long elapsed = System.currentTimeMillis() - start;
             long wait = sleepMs - elapsed;
-            if (wait > 0) {
+            if (wait > 0L) {
                 try {
                     Thread.sleep(wait);
                 } catch (InterruptedException ignored) {
@@ -142,206 +164,182 @@ public final class LocalTcpGameServer {
 
     private void updateWorld(float delta) {
         synchronized (players) {
-            for (ServerPlayerState p : players.values()) {
-                if (p.input.rotateLeft) p.angle += 140f * delta;
-                if (p.input.rotateRight) p.angle -= 140f * delta;
-                if (p.input.thrust) {
-                    float heading = p.angle + 90f;
-                    p.vx += (float) Math.cos(Math.toRadians(heading)) * 60f * delta;
-                    p.vy += (float) Math.sin(Math.toRadians(heading)) * 60f * delta;
-                }
-                p.x += p.vx * delta;
-                p.y += p.vy * delta;
-                if (p.input.shield) p.shield = Math.max(0f, p.shield - 25f * delta);
-                else p.shield = Math.min(100f, p.shield + 8f * delta);
-                p.fireCooldown -= delta;
-                if (p.input.fire && p.fireCooldown <= 0f && p.bullets.size() < 3) {
-                    float heading = p.angle + 90f;
-                    float cos = (float) Math.cos(Math.toRadians(heading));
-                    float sin = (float) Math.sin(Math.toRadians(heading));
-                    p.bullets.add(new ServerBulletState(
-                        p.playerId,
-                        p.x + cos * 20f,
-                        p.y + sin * 20f,
-                        cos * BULLET_SPEED,
-                        sin * BULLET_SPEED,
-                        BULLET_LIFE));
-                    p.fireCooldown = .22f;
-                }
-                wrap(p);
+            elapsedTime += delta;
+            if (elapsedTime >= nextAsteroidAppearanceTime) {
+                asteroids.add(new Asteroid());
+                nextAsteroidAppearanceTime += ASTEROID_SPAWN_INTERVAL;
             }
 
-            for (ServerPlayerState p : players.values()) {
-                for (int i = p.bullets.size() - 1; i >= 0; i--) {
-                    ServerBulletState bullet = p.bullets.get(i);
-                    bullet.x += bullet.vx * delta;
-                    bullet.y += bullet.vy * delta;
-                    bullet.life -= delta;
-                    wrap(bullet);
-                    if (bullet.life <= 0f) p.bullets.remove(i);
-                }
+            List<ServerPlayerState> orderedPlayers = orderedPlayers();
+            for (ServerPlayerState serverPlayer : orderedPlayers) {
+                serverPlayer.player.setExternalInput(toInputCommand(serverPlayer.input));
+                serverPlayer.player.update(delta, null);
             }
+            for (Asteroid asteroid : asteroids) asteroid.update(delta);
 
-            for (ServerAsteroidState asteroid : asteroids) {
-                asteroid.x += asteroid.vx * delta;
-                asteroid.y += asteroid.vy * delta;
-                asteroid.rotation += 25f * delta;
-                wrap(asteroid);
+            checkPlayerCollision(orderedPlayers);
+            for (ServerPlayerState shooter : orderedPlayers) {
+                checkBulletPlayerCollisions(shooter, orderedPlayers);
             }
-
-            asteroidSpawnTimer -= delta;
-            if (asteroidSpawnTimer <= 0f) {
-                asteroids.add(ServerAsteroidState.random());
-                asteroidSpawnTimer += ASTEROID_SPAWN_INTERVAL;
+            for (ServerPlayerState shooter : orderedPlayers) {
+                checkAsteroidCollisions(shooter);
             }
-
-            checkShipCollisions();
-            checkBulletPlayerCollisions();
-            checkBulletAsteroidCollisions();
-            checkAsteroidPlayerCollisions();
+            for (ServerPlayerState serverPlayer : orderedPlayers) {
+                checkAsteroidPlayerCollisions(serverPlayer);
+            }
         }
     }
 
-    private static void wrap(ServerPlayerState p) {
-        if (p.x < -20f) p.x = WORLD_WIDTH + 20f;
-        if (p.x > WORLD_WIDTH + 20f) p.x = -20f;
-        if (p.y < -20f) p.y = WORLD_HEIGHT + 20f;
-        if (p.y > WORLD_HEIGHT + 20f) p.y = -20f;
+    private List<ServerPlayerState> orderedPlayers() {
+        ArrayList<ServerPlayerState> ordered = new ArrayList<>(players.values());
+        ordered.sort(Comparator.comparingInt(new java.util.function.ToIntFunction<ServerPlayerState>() {
+            @Override public int applyAsInt(ServerPlayerState value) {
+                return value.playerId;
+            }
+        }));
+        return ordered;
     }
 
-    private static void wrap(ServerBulletState b) {
-        if (b.x < -2f) b.x = WORLD_WIDTH + 2f;
-        if (b.x > WORLD_WIDTH + 2f) b.x = -2f;
-        if (b.y < -2f) b.y = WORLD_HEIGHT + 2f;
-        if (b.y > WORLD_HEIGHT + 2f) b.y = -2f;
+    private static InputCommand toInputCommand(TcpProtocol.ParsedInput input) {
+        if (input == null) return InputCommand.none();
+        return new InputCommand(
+            input.rotateLeft,
+            input.rotateRight,
+            input.thrust,
+            input.fire,
+            input.shield,
+            input.hyperspace);
     }
 
-    private static void wrap(ServerAsteroidState a) {
-        if (a.x < -a.radius) a.x = WORLD_WIDTH + a.radius;
-        if (a.x > WORLD_WIDTH + a.radius) a.x = -a.radius;
-        if (a.y < -a.radius) a.y = WORLD_HEIGHT + a.radius;
-        if (a.y > WORLD_HEIGHT + a.radius) a.y = -a.radius;
-    }
-
-    private void checkShipCollisions() {
-        List<ServerPlayerState> allPlayers = new ArrayList<>(players.values());
-        for (int i = 0; i < allPlayers.size(); i++) {
-            ServerPlayerState a = allPlayers.get(i);
-            for (int j = i + 1; j < allPlayers.size(); j++) {
-                ServerPlayerState b = allPlayers.get(j);
-                float dx = a.x - b.x;
-                float dy = a.y - b.y;
-                if (dx * dx + dy * dy <= SHIP_COLLISION_DISTANCE * SHIP_COLLISION_DISTANCE) {
-                    applyShipHit(a);
-                    applyShipHit(b);
+    private void checkPlayerCollision(List<ServerPlayerState> orderedPlayers) {
+        for (int i = 0; i < orderedPlayers.size(); i++) {
+            PlayerManager playerOne = orderedPlayers.get(i).player;
+            if (!playerOne.isAlive()) continue;
+            for (int j = i + 1; j < orderedPlayers.size(); j++) {
+                PlayerManager playerTwo = orderedPlayers.get(j).player;
+                if (!playerTwo.isAlive()) continue;
+                if (playerOne.getPosition().dst(playerTwo.getPosition()) < SHIP_COLLISION_DISTANCE) {
+                    playerOne.hit(playerTwo.getPosition().x, playerTwo.getPosition().y, 16f, explosionSink);
+                    playerTwo.hit(playerOne.getPosition().x, playerOne.getPosition().y, 16f, explosionSink);
                 }
             }
         }
     }
 
-    private void checkBulletPlayerCollisions() {
-        List<ServerPlayerState> allPlayers = new ArrayList<>(players.values());
-        for (ServerPlayerState shooter : allPlayers) {
-            for (int bulletIndex = shooter.bullets.size() - 1; bulletIndex >= 0; bulletIndex--) {
-                ServerBulletState bullet = shooter.bullets.get(bulletIndex);
-                boolean consumed = false;
-                for (ServerPlayerState target : allPlayers) {
-                    if (target.playerId == shooter.playerId) continue;
-                    float dx = bullet.x - target.x;
-                    float dy = bullet.y - target.y;
-                    if (dx * dx + dy * dy <= BULLET_HIT_DISTANCE * BULLET_HIT_DISTANCE) {
-                        applyShipHit(target);
-                        shooter.bullets.remove(bulletIndex);
-                        consumed = true;
-                        break;
-                    }
-                }
-                if (consumed) continue;
-            }
-        }
-    }
-
-    private void checkBulletAsteroidCollisions() {
-        for (ServerPlayerState shooter : players.values()) {
-            for (int bulletIndex = shooter.bullets.size() - 1; bulletIndex >= 0; bulletIndex--) {
-                ServerBulletState bullet = shooter.bullets.get(bulletIndex);
-                boolean consumed = false;
-                for (int asteroidIndex = asteroids.size() - 1; asteroidIndex >= 0; asteroidIndex--) {
-                    ServerAsteroidState asteroid = asteroids.get(asteroidIndex);
-                    float hitDistance = asteroid.radius + 3f;
-                    float dx = bullet.x - asteroid.x;
-                    float dy = bullet.y - asteroid.y;
-                    if (dx * dx + dy * dy <= hitDistance * hitDistance) {
-                        shooter.bullets.remove(bulletIndex);
-                        asteroids.remove(asteroidIndex);
-                        asteroids.addAll(asteroid.split());
-                        consumed = true;
-                        break;
-                    }
-                }
-                if (consumed) continue;
-            }
-        }
-    }
-
-    private void checkAsteroidPlayerCollisions() {
-        List<ServerPlayerState> allPlayers = new ArrayList<>(players.values());
-        for (int asteroidIndex = asteroids.size() - 1; asteroidIndex >= 0; asteroidIndex--) {
-            ServerAsteroidState asteroid = asteroids.get(asteroidIndex);
-            boolean collided = false;
-            for (ServerPlayerState player : allPlayers) {
-                float collisionDistance = asteroid.radius + PLAYER_RADIUS;
-                float dx = player.x - asteroid.x;
-                float dy = player.y - asteroid.y;
-                if (dx * dx + dy * dy <= collisionDistance * collisionDistance) {
-                    applyShipHit(player);
-                    collided = true;
+    private void checkBulletPlayerCollisions(ServerPlayerState shooterState,
+                                             List<ServerPlayerState> orderedPlayers) {
+        PlayerManager shooter = shooterState.player;
+        for (int i = shooter.getBullets().size - 1; i >= 0; i--) {
+            Bullet bullet = shooter.getBullets().get(i);
+            for (ServerPlayerState targetState : orderedPlayers) {
+                if (targetState.playerId == shooterState.playerId) continue;
+                PlayerManager target = targetState.player;
+                if (target.isAlive() && bullet.getPosition().dst(target.getPosition()) < BULLET_HIT_DISTANCE) {
+                    target.hit(target.getPosition().x, target.getPosition().y, 2f, explosionSink);
+                    shooter.destroyBullet(bullet);
                     break;
                 }
             }
-            if (collided) {
-                asteroids.remove(asteroidIndex);
-                asteroids.addAll(asteroid.split());
+        }
+    }
+
+    private void checkAsteroidCollisions(ServerPlayerState shooterState) {
+        PlayerManager shooter = shooterState.player;
+        for (int bulletIndex = shooter.getBullets().size - 1; bulletIndex >= 0; bulletIndex--) {
+            Bullet bullet = shooter.getBullets().get(bulletIndex);
+            for (int asteroidIndex = asteroids.size() - 1; asteroidIndex >= 0; asteroidIndex--) {
+                Asteroid asteroid = asteroids.get(asteroidIndex);
+                if (bullet.getPosition().dst(asteroid.getPosition()) <= asteroid.getRadius() + 3f) {
+                    shooter.destroyBullet(bullet);
+                    replaceAsteroid(asteroidIndex, asteroid);
+                    break;
+                }
             }
         }
     }
 
-    private void applyShipHit(ServerPlayerState player) {
-        if (player.input.shield && player.shield > 0f) {
-            player.shield = Math.max(0f, player.shield - 20f);
-            return;
+    private void checkAsteroidPlayerCollisions(ServerPlayerState serverPlayer) {
+        PlayerManager player = serverPlayer.player;
+        if (!player.isAlive()) return;
+        for (int asteroidIndex = asteroids.size() - 1; asteroidIndex >= 0; asteroidIndex--) {
+            Asteroid asteroid = asteroids.get(asteroidIndex);
+            float collisionDistance = asteroid.getRadius() + 16f;
+            if (player.getPosition().dst(asteroid.getPosition()) <= collisionDistance) {
+                player.hit(asteroid.getPosition().x, asteroid.getPosition().y,
+                    asteroid.getRadius(), explosionSink);
+                replaceAsteroid(asteroidIndex, asteroid);
+            }
         }
-        respawn(player);
     }
 
-    private void respawn(ServerPlayerState player) {
-        player.x = randomRange(80f, WORLD_WIDTH - 80f);
-        player.y = randomRange(100f, WORLD_HEIGHT - 80f);
-        player.vx = 0f;
-        player.vy = 0f;
-        player.angle = randomRange(0f, 360f);
-        player.shield = 100f;
-        player.bullets.clear();
+    private void replaceAsteroid(int index, Asteroid asteroid) {
+        asteroids.remove(index);
+        addAsteroidExplosion(asteroid);
+        for (Asteroid child : asteroid.split()) asteroids.add(child);
+    }
+
+    private void addAsteroidExplosion(Asteroid asteroid) {
+        Vector2 position = asteroid.getPosition();
+        Vector2 velocity = asteroid.getVelocity();
+        pendingExplosions.add(new TcpProtocol.SnapshotExplosion(
+            false,
+            position.x,
+            position.y,
+            Color.GRAY.r,
+            Color.GRAY.g,
+            Color.GRAY.b,
+            Color.GRAY.a,
+            asteroid.getRotation(),
+            velocity.x,
+            velocity.y,
+            asteroid.getRadius(),
+            false));
     }
 
     private void broadcastSnapshot() {
         List<TcpProtocol.SnapshotPlayer> frame = new ArrayList<>();
         List<TcpProtocol.SnapshotBullet> bullets = new ArrayList<>();
         List<TcpProtocol.SnapshotAsteroid> asteroidFrame = new ArrayList<>();
+        List<TcpProtocol.SnapshotExplosion> explosionFrame = new ArrayList<>();
+
         synchronized (players) {
-            for (ServerPlayerState p : players.values()) {
+            List<ServerPlayerState> orderedPlayers = orderedPlayers();
+            for (ServerPlayerState p : orderedPlayers) {
+                PlayerManager player = p.player;
+                Vector2 position = player.getPosition();
+                Vector2 velocity = player.getVelocity();
                 frame.add(new TcpProtocol.SnapshotPlayer(
-                    p.playerId, p.x, p.y, p.angle, p.shield, p.input.shield && p.shield > 0f));
-                for (ServerBulletState bullet : p.bullets) {
-                    bullets.add(new TcpProtocol.SnapshotBullet(bullet.ownerPlayerId, bullet.x, bullet.y));
+                    p.playerId,
+                    position.x,
+                    position.y,
+                    player.getAngle(),
+                    player.getShield(),
+                    player.getLives(),
+                    player.isShieldActive(),
+                    player.isAlive(),
+                    velocity.x,
+                    velocity.y,
+                    player.getHyperspaceAttempts()));
+                for (Bullet bullet : player.getBullets()) {
+                    bullets.add(new TcpProtocol.SnapshotBullet(
+                        p.playerId,
+                        bullet.getPosition().x,
+                        bullet.getPosition().y));
                 }
             }
-            for (ServerAsteroidState asteroid : asteroids) {
+            for (Asteroid asteroid : asteroids) {
                 asteroidFrame.add(new TcpProtocol.SnapshotAsteroid(
-                    asteroid.x, asteroid.y, asteroid.radius, asteroid.rotation));
+                    asteroid.getPosition().x,
+                    asteroid.getPosition().y,
+                    asteroid.getRadius(),
+                    asteroid.getRotation(),
+                    asteroid.getVertices()));
             }
+            explosionFrame.addAll(pendingExplosions);
+            pendingExplosions.clear();
         }
-        String line = TcpProtocol.snapshotMessage(tick, frame, bullets, asteroidFrame);
+
+        String line = TcpProtocol.snapshotMessage(tick, frame, bullets, asteroidFrame, explosionFrame);
         synchronized (clients) {
             for (ClientConnection client : clients) client.send(line);
         }
@@ -401,8 +399,7 @@ public final class LocalTcpGameServer {
                     return;
                 }
                 playerId = nextPlayerId++;
-                ServerPlayerState state = new ServerPlayerState(playerId);
-                players.put(playerId, state);
+                players.put(playerId, new ServerPlayerState(playerId));
             }
             send(TcpProtocol.welcomeMessage(playerId));
         }
@@ -433,123 +430,27 @@ public final class LocalTcpGameServer {
 
     private static final class ServerPlayerState {
         private final int playerId;
-        private float x;
-        private float y;
-        private float angle;
-        private float vx;
-        private float vy;
-        private float fireCooldown;
-        private float shield = 100f;
-        private final List<ServerBulletState> bullets = new ArrayList<>();
+        private final PlayerManager player;
         private TcpProtocol.ParsedInput input = TcpProtocol.emptyInput();
 
         private ServerPlayerState(int playerId) {
             this.playerId = playerId;
-            this.x = 120f + (playerId % 8) * 180f;
-            this.y = 140f + (playerId / 8) * 280f;
-            this.angle = 90f;
-        }
-    }
-
-    private static final class ServerBulletState {
-        private final int ownerPlayerId;
-        private float x;
-        private float y;
-        private final float vx;
-        private final float vy;
-        private float life;
-
-        private ServerBulletState(int ownerPlayerId, float x, float y, float vx, float vy, float life) {
-            this.ownerPlayerId = ownerPlayerId;
-            this.x = x;
-            this.y = y;
-            this.vx = vx;
-            this.vy = vy;
-            this.life = life;
-        }
-    }
-
-    private static final class ServerAsteroidState {
-        private final float radius;
-        private float x;
-        private float y;
-        private final float vx;
-        private final float vy;
-        private float rotation;
-
-        private ServerAsteroidState(float radius, float x, float y, float vx, float vy, float rotation) {
-            this.radius = radius;
-            this.x = x;
-            this.y = y;
-            this.vx = vx;
-            this.vy = vy;
-            this.rotation = rotation;
+            this.player = new PlayerManager(colorFor(playerId), 0, 0, 0, 0, 0, 0, 4);
+            this.player.setExternalInput(InputCommand.none());
         }
 
-        private static ServerAsteroidState random() {
-            return withRadius(randomRange(ASTEROID_MIN_RADIUS, ASTEROID_MAX_RADIUS));
+        private static Color colorFor(int playerId) {
+            if (playerId == 1) return Color.WHITE;
+            if (playerId == 2) return Color.YELLOW;
+            float hueBand = (playerId % 6) / 6f;
+            float r = 0.35f + 0.55f * ((float) Math.sin(hueBand * Math.PI * 2.0 + 0.0f)) * 0.5f + 0.28f;
+            float g = 0.35f + 0.55f * ((float) Math.sin(hueBand * Math.PI * 2.0 + 2.1f)) * 0.5f + 0.28f;
+            float b = 0.35f + 0.55f * ((float) Math.sin(hueBand * Math.PI * 2.0 + 4.2f)) * 0.5f + 0.28f;
+            return new Color(clamp01(r), clamp01(g), clamp01(b), 1f);
         }
 
-        private static ServerAsteroidState large() {
-            return withRadius(randomRange(34f, ASTEROID_MAX_RADIUS));
+        private static float clamp01(float value) {
+            return Math.max(0f, Math.min(1f, value));
         }
-
-        private static ServerAsteroidState medium() {
-            return withRadius(randomRange(ASTEROID_MEDIUM_MIN_RADIUS, ASTEROID_MEDIUM_MAX_RADIUS));
-        }
-
-        private static ServerAsteroidState withRadius(float radius) {
-            float heading = randomRange(0f, 360f);
-            float speed = randomRange(ASTEROID_MIN_SPEED, ASTEROID_MAX_SPEED);
-            return new ServerAsteroidState(
-                radius,
-                randomRange(0f, WORLD_WIDTH),
-                randomRange(0f, WORLD_HEIGHT),
-                (float) Math.cos(Math.toRadians(heading)) * speed,
-                (float) Math.sin(Math.toRadians(heading)) * speed,
-                randomRange(0f, 360f));
-        }
-
-        private List<ServerAsteroidState> split() {
-            List<ServerAsteroidState> children = new ArrayList<>(2);
-            if (radius <= ASTEROID_SMALL_MAX_RADIUS) return children;
-
-            float childMin = radius <= ASTEROID_MEDIUM_MAX_RADIUS
-                ? ASTEROID_MIN_RADIUS : ASTEROID_MEDIUM_MIN_RADIUS;
-            float childMax = radius <= ASTEROID_MEDIUM_MAX_RADIUS
-                ? ASTEROID_SMALL_MAX_RADIUS : ASTEROID_MEDIUM_MAX_RADIUS;
-            float radiusOne = randomRange(childMin, childMax);
-            float radiusTwo = randomRange(childMin, childMax);
-            float massOne = radiusOne * radiusOne;
-            float massTwo = radiusTwo * radiusTwo;
-            float totalMass = massOne + massTwo;
-
-            float separationAngle = randomRange(0f, 360f);
-            float sepX = (float) Math.cos(Math.toRadians(separationAngle));
-            float sepY = (float) Math.sin(Math.toRadians(separationAngle));
-            float separationSpeed = randomRange(8f, 16f);
-            float impulseOne = separationSpeed * massTwo / totalMass;
-            float impulseTwo = separationSpeed * massOne / totalMass;
-
-            children.add(new ServerAsteroidState(
-                radiusOne,
-                x + sepX * radiusOne,
-                y + sepY * radiusOne,
-                vx + sepX * impulseOne,
-                vy + sepY * impulseOne,
-                rotation + randomRange(-20f, 20f)));
-            children.add(new ServerAsteroidState(
-                radiusTwo,
-                x - sepX * radiusTwo,
-                y - sepY * radiusTwo,
-                vx - sepX * impulseTwo,
-                vy - sepY * impulseTwo,
-                rotation + randomRange(-20f, 20f)));
-            return children;
-        }
-    }
-
-    private static float randomRange(float min, float max) {
-        return min + (float) Math.random() * (max - min);
     }
 }

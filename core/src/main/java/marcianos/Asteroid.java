@@ -123,4 +123,5 @@ public final class Asteroid {
     public float getRadius() { return radius; }
     public Vector2 getVelocity() { return velocity; }
     public float getRotation() { return rotation; }
+    public float[] getVertices() { return vertices.clone(); }
 }

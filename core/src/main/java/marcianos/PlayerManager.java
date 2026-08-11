@@ -33,6 +33,8 @@ public final class PlayerManager {
     private boolean inputEnabled = true;
     private boolean respawnEnabled = true;
     private InputCommand currentInput = InputCommand.none();
+    private InputCommand externalInput = InputCommand.none();
+    private boolean useExternalInput;
 
     public PlayerManager(Color color, int rotateLeft, int rotateRight, int thrust, int fire, int shield, int hyperspace) {
         this(color, rotateLeft, rotateRight, thrust, fire, shield, hyperspace, 3);
@@ -64,7 +66,13 @@ public final class PlayerManager {
             if (respawnEnabled && respawnTimer <= 0f && ships >= 0) respawn();
             return;
         }
-        currentInput = inputEnabled ? KeyboardInputAdapter.fromPressedKeys(keys) : InputCommand.none();
+        if (!inputEnabled) {
+            currentInput = InputCommand.none();
+        } else if (useExternalInput) {
+            currentInput = externalInput;
+        } else {
+            currentInput = KeyboardInputAdapter.fromPressedKeys(keys);
+        }
         if (currentInput.rotateLeft()) angle += 140f * delta;
         if (currentInput.rotateRight()) angle -= 140f * delta;
         if (currentInput.thrust()) {
@@ -99,6 +107,16 @@ public final class PlayerManager {
         respawnEnabled = false;
     }
 
+    public void setExternalInput(InputCommand input) {
+        useExternalInput = true;
+        externalInput = input == null ? InputCommand.none() : input;
+    }
+
+    public void clearExternalInput() {
+        useExternalInput = false;
+        externalInput = InputCommand.none();
+    }
+
     /** Applies a force for one simulation step: F = m · a. */
     public void applyForce(Vector2 force, float delta) {
         if (!alive) return;
@@ -129,11 +147,11 @@ public final class PlayerManager {
         for (Bullet bullet : bullets) bullet.draw(renderer);
     }
 
-    public boolean hit(float x, float y, float radius, GameScreen game) {
-        return hit(x, y, radius, game, false);
+    public boolean hit(float x, float y, float radius, ShipExplosionSink explosionSink) {
+        return hit(x, y, radius, explosionSink, false);
     }
 
-    public boolean hit(float x, float y, float radius, GameScreen game, boolean slowFragments) {
+    public boolean hit(float x, float y, float radius, ShipExplosionSink explosionSink, boolean slowFragments) {
         if (!alive || Vector2.dst(position.x, position.y, x, y) > radius + 16f) return false;
         if (currentInput.shield() && shield > 0f) {
             shield = Math.max(0f, shield - 20f);
@@ -143,7 +161,9 @@ public final class PlayerManager {
         ships--;
         respawnTimer = 2f;
         bullets.clear();
-        game.addShipExplosion(position.x, position.y, color, angle, velocity, slowFragments);
+        if (explosionSink != null) {
+            explosionSink.addShipExplosion(position.x, position.y, color, angle, velocity, slowFragments);
+        }
         return true;
     }
 
@@ -161,6 +181,7 @@ public final class PlayerManager {
     public float getShield() { return shield; }
     public float getAngle() { return angle; }
     public Vector2 getVelocity() { return velocity; }
+    public boolean isShieldActive() { return currentInput.shield() && shield > 0f; }
 
     private static void wrap(Vector2 p, float margin) {
         if (p.x < -margin) p.x = GameScreen.WORLD_WIDTH + margin;

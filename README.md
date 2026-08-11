@@ -12,8 +12,8 @@ Migration of an old Java applet to a multi-module libGDX Gradle project. The ori
 
 | Player | Rotate | Thrust | Fire | Shield | Hyperspace |
 |---|---|---|---|---|---|
-| 1 (white) | A / D | W | Space | Left Shift | Left Ctrl |
-| 2 (yellow) | Left / right arrows | Up arrow | Enter | Right Shift | Right Ctrl |
+| 1 (white) | Left / right arrows | Up arrow | Enter | Right Shift | Right Ctrl |
+| 2 (yellow) | A / D | W | Space | Left Shift | Left Ctrl |
 
 Each ship has three hyperspace uses per life. When its key is pressed, the
 ship appears at a random position and loses one attempt. The counter is reset

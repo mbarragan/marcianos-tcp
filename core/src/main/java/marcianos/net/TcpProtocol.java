@@ -61,7 +61,7 @@ public final class TcpProtocol {
     }
 
     public static RemoteSnapshot parseSnapshot(String line, int localPlayerId) {
-        String[] parts = line.split("\\|", 5);
+        String[] parts = line.split("\\|", 6);
         if (parts.length < 2 || !SNAP.equals(parts[0])) return null;
 
         long tick;
@@ -75,7 +75,7 @@ public final class TcpProtocol {
         if (parts.length >= 3 && !parts[2].trim().isEmpty()) {
             String[] entries = parts[2].split(";");
             for (String entry : entries) {
-                String[] p = entry.split(",", 6);
+                String[] p = entry.split(",", 11);
                 if (p.length < 5) continue;
                 try {
                     int id = Integer.parseInt(p[0]);
@@ -83,9 +83,27 @@ public final class TcpProtocol {
                     float y = Float.parseFloat(p[2]);
                     float angle = Float.parseFloat(p[3]);
                     float shield = Float.parseFloat(p[4]);
-                    boolean shieldActive = p.length >= 6 && parseBit(p[5]);
+                    int lives = 4;
+                    boolean shieldActive = false;
+                    boolean alive = true;
+                    float vx = 0f;
+                    float vy = 0f;
+                    int hyperspaceAttempts = 0;
+                    if (p.length == 6) {
+                        // Legacy payload: id,x,y,angle,shield,shieldActive
+                        shieldActive = parseBit(p[5]);
+                    } else {
+                        if (p.length >= 6) lives = Integer.parseInt(p[5]);
+                        if (p.length >= 7) shieldActive = parseBit(p[6]);
+                        if (p.length >= 8) alive = parseBit(p[7]);
+                        else alive = lives > 0;
+                        if (p.length >= 9) vx = Float.parseFloat(p[8]);
+                        if (p.length >= 10) vy = Float.parseFloat(p[9]);
+                        if (p.length >= 11) hyperspaceAttempts = Integer.parseInt(p[10]);
+                    }
                     players.add(new RemoteSnapshot.PlayerState(
-                        id, x, y, angle, shield, shieldActive, id == localPlayerId));
+                        id, x, y, angle, shield, lives, shieldActive,
+                        alive, vx, vy, hyperspaceAttempts, id == localPlayerId));
                 } catch (RuntimeException ignored) {
                 }
             }
@@ -111,25 +129,57 @@ public final class TcpProtocol {
         if (parts.length >= 5 && !parts[4].trim().isEmpty()) {
             String[] entries = parts[4].split(";");
             for (String entry : entries) {
-                String[] a = entry.split(",", 4);
-                if (a.length != 4) continue;
+                String[] a = entry.split(",");
+                if (a.length < 4) continue;
                 try {
                     float x = Float.parseFloat(a[0]);
                     float y = Float.parseFloat(a[1]);
                     float radius = Float.parseFloat(a[2]);
                     float rotation = Float.parseFloat(a[3]);
-                    asteroids.add(new RemoteSnapshot.AsteroidState(x, y, radius, rotation));
+                    float[] vertices = null;
+                    if (a.length >= 20) {
+                        vertices = new float[16];
+                        for (int i = 0; i < 16; i++) vertices[i] = Float.parseFloat(a[4 + i]);
+                    }
+                    asteroids.add(new RemoteSnapshot.AsteroidState(x, y, radius, rotation, vertices));
                 } catch (RuntimeException ignored) {
                 }
             }
         }
 
-        return new RemoteSnapshot(tick, players, bullets, asteroids);
+        List<RemoteSnapshot.ExplosionState> explosions = new ArrayList<>();
+        if (parts.length >= 6 && !parts[5].trim().isEmpty()) {
+            String[] entries = parts[5].split(";");
+            for (String entry : entries) {
+                String[] e = entry.split(",", 12);
+                if (e.length != 12) continue;
+                try {
+                    boolean shipExplosion = "S".equals(e[0]);
+                    float x = Float.parseFloat(e[1]);
+                    float y = Float.parseFloat(e[2]);
+                    float r = Float.parseFloat(e[3]);
+                    float g = Float.parseFloat(e[4]);
+                    float b = Float.parseFloat(e[5]);
+                    float a = Float.parseFloat(e[6]);
+                    float angle = Float.parseFloat(e[7]);
+                    float vx = Float.parseFloat(e[8]);
+                    float vy = Float.parseFloat(e[9]);
+                    float radius = Float.parseFloat(e[10]);
+                    boolean slowFragments = parseBit(e[11]);
+                    explosions.add(new RemoteSnapshot.ExplosionState(
+                        shipExplosion, x, y, r, g, b, a, angle, vx, vy, radius, slowFragments));
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+
+        return new RemoteSnapshot(tick, players, bullets, asteroids, explosions);
     }
 
     public static String snapshotMessage(long tick, List<SnapshotPlayer> players,
                                          List<SnapshotBullet> bullets,
-                                         List<SnapshotAsteroid> asteroids) {
+                                         List<SnapshotAsteroid> asteroids,
+                                         List<SnapshotExplosion> explosions) {
         StringBuilder sb = new StringBuilder();
         sb.append(SNAP).append('|').append(tick).append('|');
         for (int i = 0; i < players.size(); i++) {
@@ -140,7 +190,12 @@ public final class TcpProtocol {
                 .append(format(p.y)).append(',')
                 .append(format(p.angle)).append(',')
                 .append(format(p.shield)).append(',')
-                .append(bit(p.shieldActive));
+                .append(p.lives).append(',')
+                .append(bit(p.shieldActive)).append(',')
+                .append(bit(p.alive)).append(',')
+                .append(format(p.vx)).append(',')
+                .append(format(p.vy)).append(',')
+                .append(p.hyperspaceAttempts);
         }
 
         sb.append('|');
@@ -160,6 +215,29 @@ public final class TcpProtocol {
                 .append(format(a.y)).append(',')
                 .append(format(a.radius)).append(',')
                 .append(format(a.rotation));
+            if (a.vertices != null && a.vertices.length == 16) {
+                for (int v = 0; v < a.vertices.length; v++) {
+                    sb.append(',').append(format(a.vertices[v]));
+                }
+            }
+        }
+
+        sb.append('|');
+        for (int i = 0; i < explosions.size(); i++) {
+            SnapshotExplosion e = explosions.get(i);
+            if (i > 0) sb.append(';');
+            sb.append(e.shipExplosion ? 'S' : 'A').append(',')
+                .append(format(e.x)).append(',')
+                .append(format(e.y)).append(',')
+                .append(format(e.r)).append(',')
+                .append(format(e.g)).append(',')
+                .append(format(e.b)).append(',')
+                .append(format(e.a)).append(',')
+                .append(format(e.angle)).append(',')
+                .append(format(e.vx)).append(',')
+                .append(format(e.vy)).append(',')
+                .append(format(e.radius)).append(',')
+                .append(bit(e.slowFragments));
         }
         return sb.toString();
     }
@@ -209,16 +287,28 @@ public final class TcpProtocol {
         public final float y;
         public final float angle;
         public final float shield;
+        public final int lives;
         public final boolean shieldActive;
+        public final boolean alive;
+        public final float vx;
+        public final float vy;
+        public final int hyperspaceAttempts;
 
         public SnapshotPlayer(int playerId, float x, float y, float angle,
-                              float shield, boolean shieldActive) {
+                              float shield, int lives, boolean shieldActive,
+                      boolean alive, float vx, float vy,
+                      int hyperspaceAttempts) {
             this.playerId = playerId;
             this.x = x;
             this.y = y;
             this.angle = angle;
             this.shield = shield;
+            this.lives = lives;
             this.shieldActive = shieldActive;
+            this.alive = alive;
+            this.vx = vx;
+            this.vy = vy;
+            this.hyperspaceAttempts = hyperspaceAttempts;
         }
     }
 
@@ -239,12 +329,52 @@ public final class TcpProtocol {
         public final float y;
         public final float radius;
         public final float rotation;
+        public final float[] vertices;
 
         public SnapshotAsteroid(float x, float y, float radius, float rotation) {
+            this(x, y, radius, rotation, null);
+        }
+
+        public SnapshotAsteroid(float x, float y, float radius, float rotation,
+                                float[] vertices) {
             this.x = x;
             this.y = y;
             this.radius = radius;
             this.rotation = rotation;
+            this.vertices = vertices == null ? null : vertices.clone();
+        }
+    }
+
+    public static final class SnapshotExplosion {
+        public final boolean shipExplosion;
+        public final float x;
+        public final float y;
+        public final float r;
+        public final float g;
+        public final float b;
+        public final float a;
+        public final float angle;
+        public final float vx;
+        public final float vy;
+        public final float radius;
+        public final boolean slowFragments;
+
+        public SnapshotExplosion(boolean shipExplosion, float x, float y,
+                                 float r, float g, float b, float a,
+                                 float angle, float vx, float vy,
+                                 float radius, boolean slowFragments) {
+            this.shipExplosion = shipExplosion;
+            this.x = x;
+            this.y = y;
+            this.r = r;
+            this.g = g;
+            this.b = b;
+            this.a = a;
+            this.angle = angle;
+            this.vx = vx;
+            this.vy = vy;
+            this.radius = radius;
+            this.slowFragments = slowFragments;
         }
     }
 }

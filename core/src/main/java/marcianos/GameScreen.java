@@ -17,7 +17,7 @@ import com.badlogic.gdx.utils.viewport.Viewport;
 import com.badlogic.gdx.ScreenAdapter;
 
 /** Core simulation. Rendering and input are kept separate from game state for a future network layer. */
-public final class GameScreen extends ScreenAdapter {
+public final class GameScreen extends ScreenAdapter implements ShipExplosionSink {
     public static final String PLAYER_ONE_NAME = "PLAYER 1";
     public static final String PLAYER_TWO_NAME = "PLAYER 2";
     public static final String MESSAGE_TO_START = "Press to start";
