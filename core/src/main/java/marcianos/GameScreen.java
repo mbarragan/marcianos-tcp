@@ -37,7 +37,7 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
     private static final float ONE_PLAYER_ASTEROID_SPAWN_INTERVAL = 10f;
     
     private static final float STAR_APPEARANCE_TIME = 30f;
-    private static final float STAR_MASS_INTERVAL = 9f;
+    private static final float STAR_MASS_INTERVAL = 20f;
 
     private ShapeRenderer renderer;
     private OrthographicCamera camera;

@@ -34,7 +34,7 @@ public final class LocalTcpGameServer {
     private static final float ASTEROID_APPEARANCE_TIME = 10f;
     private static final float ASTEROID_SPAWN_INTERVAL = 20f;
     private static final float STAR_APPEARANCE_TIME = 30f;
-    private static final float STAR_MASS_INTERVAL = 9f;
+    private static final float STAR_MASS_INTERVAL = 20f;
     private static final Map<Integer, LocalTcpGameServer> RUNNING = new ConcurrentHashMap<>();
 
     public static synchronized void startIfNeeded(int port) throws IOException {
