@@ -8,6 +8,7 @@ import com.badlogic.gdx.math.Vector2;
 public final class Star {
     private static final float INITIAL_MASS = 10000f;
     private static final float MASS_INCREMENT = 1000f;
+    private static final int MAX_MASS_INCREMENTS = 10;
     private static final float GRAVITATIONAL_CONSTANT = 100f;
     private static final float RADIUS = 21f;
     private static final float ASTERISK_RADIUS = 17f;
@@ -15,6 +16,7 @@ public final class Star {
     private final float y;
     private final Vector2 gravityDirection = new Vector2();
     private float mass = INITIAL_MASS;
+    private int massIncrementsApplied = 0;
 
     public Star(float x, float y) {
         this.x = x;
@@ -44,7 +46,11 @@ public final class Star {
         player.applyForce(gravityDirection.scl(force), delta);
     }
 
-    public void increaseMass() { mass += MASS_INCREMENT; }
+    public void increaseMass() {
+        if (massIncrementsApplied >= MAX_MASS_INCREMENTS) return;
+        mass += MASS_INCREMENT;
+        massIncrementsApplied++;
+    }
     public float getMass() { return mass; }
 
     public float getX() { return x; }
