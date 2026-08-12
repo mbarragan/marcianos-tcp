@@ -1,64 +1,108 @@
-# Cutre-Marcianos (libGDX migration)
+# Cutre-Marcianos
 
-Migration of an old Java applet to a multi-module libGDX Gradle project. The original `.class` files are kept apart as a reference; the new game does not depend on AWT, Applet, or those binaries.
+Desktop libGDX version of the original game, now with local multiplayer and a built-in online TCP mode.
 
-## What has been ported
+Current app version: 2.0.6.
 
-- Ship, acceleration, rotation, firing, shield, lives, player collisions, and explosions.
-- The game state is managed by `GameScreen` and each player's simulation by `PlayerManager`; this separation makes it easier to add a network layer later.
-- No images, fonts, or sounds are required to run this first version.
+## Features
+
+- Classic Asteroids-style gameplay with lives, shield, hyperspace, bullets, collisions, and explosions.
+- Local play from the presentation screen:
+	- 1 player mode
+	- 2 players mode (same keyboard)
+- Online play from the presentation screen:
+	- CREATE (host)
+	- JOIN (client)
+- Up to 16 players in the current built-in TCP server.
 
 ## Controls
 
+### Local 2-player mode
+
 | Player | Rotate | Thrust | Fire | Shield | Hyperspace |
 |---|---|---|---|---|---|
-| 1 (white) | Left / right arrows | Up arrow | Enter | Right Shift | Right Ctrl |
+| 1 (white) | Left / Right | Up | Enter | Right Shift | Right Ctrl |
 | 2 (yellow) | A / D | W | Space | Left Shift | Left Ctrl |
 
-Each ship has three hyperspace uses per life. When its key is pressed, the
-ship appears at a random position and loses one attempt. The counter is reset
-when the ship respawns after losing a life.
+### Online mode
 
-The game is restarted by closing and running the application again.
+The local online player uses Player 1 controls:
 
-## Requirements without administrator privileges
+- Rotate: Left / Right
+- Thrust: Up
+- Fire: Enter
+- Shield: Right Shift
+- Hyperspace: Right Ctrl
 
-1. Java 8 or later. Java 21 was detected on the machine during the migration. If Gradle requests a newer version, a JDK can be downloaded to a user folder and `JAVA_HOME` can be configured only for that terminal; it does not need to be installed system-wide on Windows.
-2. Gradle 8.10 (compatible with java 21) or later. Administrator privileges are not required if the ZIP is downloaded from [gradle.org](https://gradle.org/releases/) and extracted, for example, to `%USERPROFILE%\\tools\\gradle`.
-3. VS Code. No plugin is required for compilation: Gradle can be run from the integrated terminal.
+## Requirements
 
-Recommended, but optional, extensions:
+1. Java 8 or later (Java 21 is known to work).
+2. Gradle installed on PATH.
 
-- Extension Pack for Java (`vscjava.vscode-java-pack`) for autocomplete, errors, and debugging.
-- Gradle for Java (`vscjava.vscode-gradle`) to view Gradle tasks in the side panel.
+Note: this repository does not include gradlew/gradlew.bat, so use system Gradle commands.
 
 ## Build and run
 
-From the project root folder (`.\\Workspace\\marcianos`), run the following commands in a VS Code terminal:
+From project root:
 
 ```text
 gradle build
 gradle :desktop:run
 ```
 
-The first run downloads Gradle dependencies from Maven Central and may take some time. The desktop executable opens in a 1920 x 1080 window.
-
-To view the available tasks:
+Useful command:
 
 ```text
 gradle tasks
 ```
 
-If a Gradle wrapper is configured on the machine, the equivalent commands are `gradlew.bat build` and `gradlew.bat :desktop:run`; using the wrapper is recommended so that the whole team uses exactly the same version.
+## Run two game windows at the same time
 
-## Architecture for Internet multiplayer
+Use two terminals in the same project folder and run this in both:
 
-This version uses a local simulation. For Internet multiplayer, it is better not to send drawn positions; the following components should be separated in the future:
+```text
+gradle :desktop:run
+```
 
-1. `GameState`: serializable positions, velocities, angles, lives, and projectiles.
-2. `GameSimulation`: deterministic rules and collisions.
-3. `InputCommand`: player actions with a tick number.
-4. libGDX client: renders the latest confirmed state and sends commands.
-5. Authoritative server: validates commands, runs the simulation, and distributes snapshots.
+You can also spawn new terminals from PowerShell:
 
-For a first online version, I would recommend a separate Java server using TCP/WebSocket or UDP, keeping libGDX as the client only. Networking has not been added yet to avoid mixing it with the visual migration and to allow the local game to be tested first.
+```powershell
+Start-Process powershell -ArgumentList '-NoExit','-Command','cd "c:\Desarrollo\Workspace\marcianos-tcp"; gradle :desktop:run'
+```
+
+Run it twice to launch two instances.
+
+## Online quick guide (CREATE/JOIN)
+
+From the presentation screen:
+
+- Press C to open CREATE.
+- Press J to open JOIN.
+
+In CREATE:
+
+- H edits bind host (default 0.0.0.0).
+- P edits port (default 7777).
+- N edits player name.
+- Enter starts the host session.
+
+In JOIN:
+
+- H edits target host.
+- P edits port.
+- N edits player name.
+- Enter connects.
+
+Important host rule:
+
+- Do not use localhost on a remote machine.
+- Use the host machine LAN IP (same network) or public IP (different networks).
+- Host machine must allow the selected TCP port in firewall/router when playing over the Internet.
+
+## Current networking notes
+
+- The built-in server is intended for the integrated online mode and testing.
+- In CREATE mode, server bind address and client connection host are handled separately:
+	- Server bind host defaults to 0.0.0.0.
+	- Host local client connects to 127.0.0.1.
+- Player editing keys H, P, and N open text input dialogs in desktop mode.

@@ -6,6 +6,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
@@ -22,7 +23,7 @@ import marcianos.InputCommand;
 import marcianos.PlayerManager;
 import marcianos.ShipExplosionSink;
 
-/** Lightweight localhost TCP server used to validate online simulation with desktop rules. */
+/** Lightweight TCP server used to validate online simulation with desktop rules. */
 public final class LocalTcpGameServer {
     private static final int MAX_PLAYERS = 16;
     private static final float SHIP_COLLISION_DISTANCE = 32f;
@@ -32,8 +33,12 @@ public final class LocalTcpGameServer {
     private static final Map<Integer, LocalTcpGameServer> RUNNING = new ConcurrentHashMap<>();
 
     public static synchronized void startIfNeeded(int port) throws IOException {
+        startIfNeeded("0.0.0.0", port);
+    }
+
+    public static synchronized void startIfNeeded(String bindHost, int port) throws IOException {
         if (RUNNING.containsKey(port)) return;
-        LocalTcpGameServer server = new LocalTcpGameServer(port);
+        LocalTcpGameServer server = new LocalTcpGameServer(bindHost, port);
         server.start();
         RUNNING.put(port, server);
     }
@@ -43,6 +48,7 @@ public final class LocalTcpGameServer {
         if (server != null) server.stop();
     }
 
+    private final String bindHost;
     private final int port;
     private final List<ClientConnection> clients =
         Collections.synchronizedList(new ArrayList<ClientConnection>());
@@ -77,12 +83,18 @@ public final class LocalTcpGameServer {
     private float elapsedTime;
     private float nextAsteroidAppearanceTime = ASTEROID_APPEARANCE_TIME;
 
-    private LocalTcpGameServer(int port) {
+    private LocalTcpGameServer(String bindHost, int port) {
+        this.bindHost = bindHost == null ? "" : bindHost.trim();
         this.port = port;
     }
 
     private void start() throws IOException {
-        serverSocket = new ServerSocket(port);
+        serverSocket = new ServerSocket();
+        if (bindHost.isEmpty() || "0.0.0.0".equals(bindHost) || "*".equals(bindHost)) {
+            serverSocket.bind(new InetSocketAddress(port));
+        } else {
+            serverSocket.bind(new InetSocketAddress(bindHost, port));
+        }
         synchronized (players) {
             players.clear();
             asteroids.clear();

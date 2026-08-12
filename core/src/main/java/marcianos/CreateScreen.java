@@ -8,6 +8,8 @@ import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
 
 /** Create screen for host-mode stub session setup. */
 public final class CreateScreen extends ScreenAdapter {
@@ -22,7 +24,7 @@ public final class CreateScreen extends ScreenAdapter {
     private SpriteBatch batch;
     private BitmapFont titleFont;
     private BitmapFont bodyFont;
-    private String host = "localhost";
+    private String bindHost = "0.0.0.0";
     private String playerName = "Host";
     private int port = 7777;
     private UiState uiState = UiState.READY;
@@ -50,7 +52,7 @@ public final class CreateScreen extends ScreenAdapter {
         if (uiState == UiState.STARTING) {
             startTimer -= delta;
             if (startTimer <= 0f) {
-                game.startOnlineGame(new OnlineSessionConfig(true, host, port, playerName));
+                game.startOnlineGame(new OnlineSessionConfig(true, "127.0.0.1", port, playerName, bindHost));
                 return;
             }
         } else {
@@ -64,10 +66,11 @@ public final class CreateScreen extends ScreenAdapter {
         batch.begin();
         float centerY = Gdx.graphics.getHeight() / 2f;
         drawCentered(titleFont, "CREATE ONLINE GAME", Color.GREEN, centerY + 140f);
-        drawCentered(bodyFont, "Bind host: " + host, Color.WHITE, centerY + 70f);
+        drawCentered(bodyFont, "Bind host: " + bindHost, Color.WHITE, centerY + 70f);
         drawCentered(bodyFont, "Port: " + port, Color.WHITE, centerY + 35f);
         drawCentered(bodyFont, "Player: " + playerName, Color.WHITE, centerY);
         drawCentered(bodyFont, "ENTER create | H edit host | P edit port | N edit name", Color.CYAN, centerY - 55f);
+        drawCentered(bodyFont, "Remote players must use your LAN/public IP in JOIN mode", Color.YELLOW, centerY - 75f);
         drawCentered(bodyFont, statusMessage, uiState == UiState.ERROR ? Color.SALMON : Color.LIGHT_GRAY, centerY - 95f);
         drawCentered(bodyFont, "ESC return to presentation", Color.RED, centerY - 135f);
         batch.end();
@@ -75,19 +78,19 @@ public final class CreateScreen extends ScreenAdapter {
 
     private void handleEditingInput() {
         if (Gdx.input.isKeyJustPressed(Input.Keys.H)) {
-            Gdx.input.getTextInput(new Input.TextInputListener() {
+            requestTextInput(new Input.TextInputListener() {
                 @Override public void input(String text) {
                     String value = text == null ? "" : text.trim();
-                    if (!value.isEmpty()) host = value;
+                    if (!value.isEmpty()) bindHost = value;
                 }
 
                 @Override public void canceled() {
                 }
-            }, "Create Bind Host", host, "e.g. localhost");
+            }, "Create Bind Host", bindHost, "e.g. 0.0.0.0");
             return;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.P)) {
-            Gdx.input.getTextInput(new Input.TextInputListener() {
+            requestTextInput(new Input.TextInputListener() {
                 @Override public void input(String text) {
                     try {
                         int parsed = Integer.parseInt(text.trim());
@@ -104,7 +107,7 @@ public final class CreateScreen extends ScreenAdapter {
             return;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.N)) {
-            Gdx.input.getTextInput(new Input.TextInputListener() {
+            requestTextInput(new Input.TextInputListener() {
                 @Override public void input(String text) {
                     String value = text == null ? "" : text.trim();
                     if (!value.isEmpty()) playerName = value;
@@ -116,8 +119,28 @@ public final class CreateScreen extends ScreenAdapter {
         }
     }
 
+    private void requestTextInput(Input.TextInputListener listener, String title,
+                                  String text, String hint) {
+        try {
+            final String[] value = new String[1];
+            SwingUtilities.invokeAndWait(new Runnable() {
+                @Override public void run() {
+                    value[0] = JOptionPane.showInputDialog(null, title, text);
+                }
+            });
+            if (value[0] == null) listener.canceled();
+            else listener.input(value[0]);
+            return;
+        } catch (RuntimeException ignored) {
+            // Fallback to libGDX dialog when Swing is unavailable.
+        } catch (Exception ignored) {
+            // Fallback to libGDX dialog when Swing is unavailable.
+        }
+        Gdx.input.getTextInput(listener, title, text, hint);
+    }
+
     private void attemptStart() {
-        if (host.trim().isEmpty()) {
+        if (bindHost.trim().isEmpty()) {
             uiState = UiState.ERROR;
             statusMessage = "Bind host is required.";
             return;

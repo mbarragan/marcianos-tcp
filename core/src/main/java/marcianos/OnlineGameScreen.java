@@ -75,7 +75,7 @@ public final class OnlineGameScreen extends ScreenAdapter {
         }
         if (config.hostMode()) {
             try {
-                LocalTcpGameServer.startIfNeeded(config.port());
+                LocalTcpGameServer.startIfNeeded(config.bindHost(), config.port());
             } catch (RuntimeException ex) {
                 // Handled in HUD through client connection state.
             } catch (Exception ex) {

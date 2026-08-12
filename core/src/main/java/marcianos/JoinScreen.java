@@ -8,6 +8,8 @@ import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
 
 /** Join screen with basic host and port configuration. */
 public final class JoinScreen extends ScreenAdapter {
@@ -22,11 +24,11 @@ public final class JoinScreen extends ScreenAdapter {
     private SpriteBatch batch;
     private BitmapFont titleFont;
     private BitmapFont bodyFont;
-    private String host = "localhost";
+    private String host = "127.0.0.1";
     private String playerName = "Player";
     private int port = 7777;
     private UiState uiState = UiState.READY;
-    private String statusMessage = "Press H to edit host, P to edit port, N for name.";
+    private String statusMessage = "Press H to edit host (LAN/public IP), P port, N name.";
     private float connectTimer;
 
     public JoinScreen(MarcianosGame game) {
@@ -68,6 +70,7 @@ public final class JoinScreen extends ScreenAdapter {
         drawCentered(bodyFont, "Port: " + port, Color.WHITE, centerY + 35f);
         drawCentered(bodyFont, "Player: " + playerName, Color.WHITE, centerY);
         drawCentered(bodyFont, "ENTER join | H edit host | P edit port | N edit name", Color.CYAN, centerY - 55f);
+        drawCentered(bodyFont, "Use host machine LAN/public IP, not localhost", Color.YELLOW, centerY - 75f);
         drawCentered(bodyFont, statusMessage, uiState == UiState.ERROR ? Color.SALMON : Color.LIGHT_GRAY, centerY - 95f);
         drawCentered(bodyFont, "ESC return to presentation", Color.RED, centerY - 135f);
         batch.end();
@@ -75,7 +78,7 @@ public final class JoinScreen extends ScreenAdapter {
 
     private void handleEditingInput() {
         if (Gdx.input.isKeyJustPressed(Input.Keys.H)) {
-            Gdx.input.getTextInput(new Input.TextInputListener() {
+            requestTextInput(new Input.TextInputListener() {
                 @Override public void input(String text) {
                     String value = text == null ? "" : text.trim();
                     if (!value.isEmpty()) host = value;
@@ -83,11 +86,11 @@ public final class JoinScreen extends ScreenAdapter {
 
                 @Override public void canceled() {
                 }
-            }, "Join Host", host, "e.g. localhost");
+            }, "Join Host", host, "e.g. 192.168.1.40 or public IP");
             return;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.P)) {
-            Gdx.input.getTextInput(new Input.TextInputListener() {
+            requestTextInput(new Input.TextInputListener() {
                 @Override public void input(String text) {
                     try {
                         int parsed = Integer.parseInt(text.trim());
@@ -104,7 +107,7 @@ public final class JoinScreen extends ScreenAdapter {
             return;
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.N)) {
-            Gdx.input.getTextInput(new Input.TextInputListener() {
+            requestTextInput(new Input.TextInputListener() {
                 @Override public void input(String text) {
                     String value = text == null ? "" : text.trim();
                     if (!value.isEmpty()) playerName = value;
@@ -114,6 +117,26 @@ public final class JoinScreen extends ScreenAdapter {
                 }
             }, "Player Name", playerName, "visible name");
         }
+    }
+
+    private void requestTextInput(Input.TextInputListener listener, String title,
+                                  String text, String hint) {
+        try {
+            final String[] value = new String[1];
+            SwingUtilities.invokeAndWait(new Runnable() {
+                @Override public void run() {
+                    value[0] = JOptionPane.showInputDialog(null, title, text);
+                }
+            });
+            if (value[0] == null) listener.canceled();
+            else listener.input(value[0]);
+            return;
+        } catch (RuntimeException ignored) {
+            // Fallback to libGDX dialog when Swing is unavailable.
+        } catch (Exception ignored) {
+            // Fallback to libGDX dialog when Swing is unavailable.
+        }
+        Gdx.input.getTextInput(listener, title, text, hint);
     }
 
     private void attemptJoin() {

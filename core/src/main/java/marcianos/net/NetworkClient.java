@@ -9,7 +9,7 @@ import java.net.Socket;
 import marcianos.InputCommand;
 import marcianos.OnlineSessionConfig;
 
-/** TCP client for localhost/remote server integration using text-line protocol. */
+/** TCP client for loopback/LAN/Internet server integration using text-line protocol. */
 public final class NetworkClient {
     public enum ConnectionState {
         DISCONNECTED,
@@ -77,7 +77,7 @@ public final class NetworkClient {
     private void doConnect() {
         try {
             Socket s = new Socket();
-            s.connect(new InetSocketAddress(config.host(), config.port()), 2000);
+            s.connect(new InetSocketAddress(config.connectHost(), config.port()), 2000);
             socket = s;
             writer = new PrintWriter(socket.getOutputStream(), true);
             reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
