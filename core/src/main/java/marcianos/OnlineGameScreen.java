@@ -26,6 +26,8 @@ import marcianos.net.RemoteSnapshot;
 public final class OnlineGameScreen extends ScreenAdapter {
     private static final float INFO_WIDTH = 210f;
     private static final float INFO_HEIGHT = 280f;
+    private static final float OTHER_NAME_LEFT_X = 18f;
+    private static final float OTHER_SCORE_RIGHT_X = 192f;
     private static final String MESSAGE_TO_START_AGAIN = "Press to start again";
 
     private final MarcianosGame game;
@@ -46,7 +48,6 @@ public final class OnlineGameScreen extends ScreenAdapter {
     private NetworkClient networkClient;
     private RemoteSnapshot snapshot;
     private long lastProcessedExplosionTick = -1L;
-    private boolean gameOver;
 
     public OnlineGameScreen(MarcianosGame game, OnlineSessionConfig config) {
         this.game = game;
@@ -100,11 +101,6 @@ public final class OnlineGameScreen extends ScreenAdapter {
         if (latest != null) {
             snapshot = latest;
             ingestSnapshotExplosionsIfNeeded(latest);
-            updateGameOverState();
-        }
-        if (gameOver && hasStartInput()) {
-            restartOnlineMatch();
-            return;
         }
         for (ExplosionEffect explosion : explosions) explosion.update(Math.min(delta, 1f / 30f));
         for (int i = explosions.size - 1; i >= 0; i--) {
@@ -118,11 +114,6 @@ public final class OnlineGameScreen extends ScreenAdapter {
         drawGameMessage();
     }
 
-    private void updateGameOverState() {
-        RemoteSnapshot.PlayerState localPlayer = findLocalPlayer();
-        gameOver = localPlayer != null && localPlayer.lives() <= 0;
-    }
-
     private boolean hasStartInput() {
         for (int key = 0; key <= Input.Keys.MAX_KEYCODE; key++) {
             if (Gdx.input.isKeyJustPressed(key)) return true;
@@ -134,28 +125,7 @@ public final class OnlineGameScreen extends ScreenAdapter {
     }
 
     private void drawGameMessage() {
-        if (!gameOver) return;
-        float gameWidth = Gdx.graphics.getWidth() - INFO_WIDTH;
-        float centerX = gameWidth / 2f;
-        float centerY = Gdx.graphics.getHeight() / 2f;
-        batch.setProjectionMatrix(hudCamera.combined);
-        batch.begin();
-        messageFont.setColor(Color.RED);
-        layout.setText(messageFont, "GAME OVER");
-        messageFont.draw(batch, "GAME OVER", centerX - layout.width / 2f, centerY + 30f);
-        layout.setText(messageFont, MESSAGE_TO_START_AGAIN);
-        messageFont.draw(batch, MESSAGE_TO_START_AGAIN,
-            centerX - layout.width / 2f, centerY - 90f);
-        batch.end();
-    }
-
-    private void restartOnlineMatch() {
-        explosions.clear();
-        gameOver = false;
-        if (networkClient != null) {
-            networkClient.requestRespawn();
-            return;
-        }
+        // Online mode is continuous; there is no terminal GAME OVER state.
     }
 
     @Override public void resize(int width, int height) {
@@ -191,10 +161,22 @@ public final class OnlineGameScreen extends ScreenAdapter {
 
         renderer.begin(ShapeRenderer.ShapeType.Line);
         drawAsteroids();
+        if (snapshot.star() != null) drawStar(snapshot.star());
         for (RemoteSnapshot.PlayerState player : snapshot.players()) drawShip(player);
         drawBullets();
         for (ExplosionEffect explosion : explosions) explosion.draw(renderer);
         renderer.end();
+    }
+
+    private void drawStar(RemoteSnapshot.StarState star) {
+        renderer.setColor(Color.YELLOW);
+        renderer.circle(star.x(), star.y(), star.radius(), 32);
+        for (int i = 0; i < 6; i++) {
+            float angle = MathUtils.PI * i / 3f;
+            float dx = MathUtils.cos(angle) * (star.radius() - 4f);
+            float dy = MathUtils.sin(angle) * (star.radius() - 4f);
+            renderer.line(star.x() - dx, star.y() - dy, star.x() + dx, star.y() + dy);
+        }
     }
 
     private void ingestSnapshotExplosionsIfNeeded(RemoteSnapshot latest) {
@@ -323,7 +305,6 @@ public final class OnlineGameScreen extends ScreenAdapter {
 
         if (localPlayer != null) {
             renderer.begin(ShapeRenderer.ShapeType.Line);
-            drawShipIcons(panelX + 95f, topY + 230f, localPlayer);
             drawJumpIcons(panelX + 95f, topY + 125f, localPlayer);
             renderer.end();
         }
@@ -334,8 +315,9 @@ public final class OnlineGameScreen extends ScreenAdapter {
             drawLeft(bodyFont, "Waiting for local player snapshot...", Color.LIGHT_GRAY,
                 panelX + 18f, topY + 160f);
         } else {
-            drawLeft(bodyFont, "PLAYER " + localPlayer.playerId(), Color.WHITE, panelX + 18f, topY + 300f);
-            drawLeft(bodyFont, "LIVES", Color.LIGHT_GRAY, panelX + 18f, topY + 245f);
+            drawLeft(bodyFont, displayName(localPlayer), Color.WHITE, panelX + 18f, topY + 300f);
+            drawLeft(bodyFont, "SCORE", Color.LIGHT_GRAY, panelX + 18f, topY + 245f);
+            drawLeft(bodyFont, Integer.toString(localPlayer.score()), Color.WHITE, panelX + 18f, topY + 222f);
             drawLeft(bodyFont, "SHIELD", Color.LIGHT_GRAY, panelX + 18f, topY + 195f);
             drawLeft(bodyFont, "JUMPS", Color.LIGHT_GRAY, panelX + 18f, topY + 140f);
         }
@@ -343,7 +325,6 @@ public final class OnlineGameScreen extends ScreenAdapter {
         float summaryY = topY - 34f;
         drawLeft(otherPlayersFont, "OTHER PLAYERS", Color.LIGHT_GRAY, panelX + 18f, summaryY);
         List<RemoteSnapshot.PlayerState> orderedPlayers = orderedPlayers();
-        ArrayList<OpponentHudRow> opponentRows = new ArrayList<>();
         int row = 0;
         for (RemoteSnapshot.PlayerState player : orderedPlayers) {
             if (player.localPlayer()) continue;
@@ -353,9 +334,10 @@ public final class OnlineGameScreen extends ScreenAdapter {
             }
             float rowY = summaryY - 28f - row * 28f;
             Color lineColor = desktopColorFor(player.playerId());
-            String shortName = abbreviatePlayerName(player);
-            drawLeft(otherPlayersFont, shortName, lineColor, panelX + 18f, rowY);
-            opponentRows.add(new OpponentHudRow(player, panelX + 100f, rowY - 4f));
+            String shortName = abbreviatePlayerName(player, OTHER_SCORE_RIGHT_X - OTHER_NAME_LEFT_X - 46f);
+            drawLeft(otherPlayersFont, shortName, lineColor, panelX + OTHER_NAME_LEFT_X, rowY);
+            drawRight(otherPlayersFont, Integer.toString(player.score()), lineColor,
+                panelX + OTHER_SCORE_RIGHT_X, rowY);
             row++;
         }
         if (row == 0) drawLeft(otherPlayersFont, "No other players connected", Color.LIGHT_GRAY,
@@ -373,23 +355,28 @@ public final class OnlineGameScreen extends ScreenAdapter {
             drawLeft(bodyFont, "ESC return", Color.SALMON, panelX + 18f, 42f);
         }
         batch.end();
-
-        if (!opponentRows.isEmpty()) {
-            renderer.setProjectionMatrix(hudCamera.combined);
-            renderer.begin(ShapeRenderer.ShapeType.Line);
-            for (OpponentHudRow rowData : opponentRows) {
-                drawShipIcons(rowData.iconsX, rowData.iconsY, rowData.player);
-            }
-            renderer.end();
-        }
     }
 
-    private String abbreviatePlayerName(RemoteSnapshot.PlayerState player) {
-        String base = player.playerName();
-        if (base == null || base.trim().isEmpty()) base = "P" + player.playerId();
+    private String abbreviatePlayerName(RemoteSnapshot.PlayerState player, float maxWidth) {
+        String base = displayName(player);
         base = base.trim();
-        if (base.length() <= 8) return base;
-        return base.substring(0, 8);
+        layout.setText(otherPlayersFont, base);
+        if (layout.width <= maxWidth) return base;
+        String suffix = "...";
+        int end = base.length();
+        while (end > 1) {
+            String candidate = base.substring(0, end) + suffix;
+            layout.setText(otherPlayersFont, candidate);
+            if (layout.width <= maxWidth) return candidate;
+            end--;
+        }
+        return suffix;
+    }
+
+    private String displayName(RemoteSnapshot.PlayerState player) {
+        String base = player.playerName();
+        if (base == null || base.trim().isEmpty()) return "P" + player.playerId();
+        return base.trim();
     }
 
     private RemoteSnapshot.PlayerState findLocalPlayer() {
@@ -405,17 +392,6 @@ public final class OnlineGameScreen extends ScreenAdapter {
         ArrayList<RemoteSnapshot.PlayerState> ordered = new ArrayList<>(snapshot.players());
         ordered.sort(Comparator.comparingInt(RemoteSnapshot.PlayerState::playerId));
         return ordered;
-    }
-
-    private void drawShipIcons(float x, float y, RemoteSnapshot.PlayerState player) {
-        renderer.setColor(desktopColorFor(player.playerId()));
-        for (int i = 0; i < player.lives(); i++) {
-            float cx = x + i * 28f;
-            renderer.line(cx, y + 10f, cx - 6f, y - 7f);
-            renderer.line(cx - 6f, y - 7f, cx, y - 4f);
-            renderer.line(cx, y - 4f, cx + 6f, y - 7f);
-            renderer.line(cx + 6f, y - 7f, cx, y + 10f);
-        }
     }
 
     private void drawJumpIcons(float x, float y, RemoteSnapshot.PlayerState player) {
@@ -437,22 +413,16 @@ public final class OnlineGameScreen extends ScreenAdapter {
         return colorFor(playerId, false);
     }
 
-    private static final class OpponentHudRow {
-        private final RemoteSnapshot.PlayerState player;
-        private final float iconsX;
-        private final float iconsY;
-
-        private OpponentHudRow(RemoteSnapshot.PlayerState player, float iconsX, float iconsY) {
-            this.player = player;
-            this.iconsX = iconsX;
-            this.iconsY = iconsY;
-        }
-    }
-
     private void drawLeft(BitmapFont font, String text, Color color, float x, float y) {
         font.setColor(color);
         layout.setText(font, text);
         font.draw(batch, text, x, y);
+    }
+
+    private void drawRight(BitmapFont font, String text, Color color, float rightX, float y) {
+        font.setColor(color);
+        layout.setText(font, text);
+        font.draw(batch, text, rightX - layout.width, y);
     }
 
     private static Color colorFor(int playerId, boolean local) {

@@ -18,12 +18,13 @@ public final class RemoteSnapshot {
         private final float vx;
         private final float vy;
         private final int hyperspaceAttempts;
+        private final int score;
         private final String playerName;
         private final boolean localPlayer;
 
         public PlayerState(int playerId, float x, float y, float angle, float shield,
                            int lives, boolean shieldActive, boolean alive,
-               float vx, float vy, int hyperspaceAttempts, String playerName,
+               float vx, float vy, int hyperspaceAttempts, int score, String playerName,
                    boolean localPlayer) {
             this.playerId = playerId;
             this.x = x;
@@ -36,6 +37,7 @@ public final class RemoteSnapshot {
             this.vx = vx;
             this.vy = vy;
             this.hyperspaceAttempts = hyperspaceAttempts;
+            this.score = score;
             this.playerName = playerName;
             this.localPlayer = localPlayer;
         }
@@ -51,8 +53,25 @@ public final class RemoteSnapshot {
         public float vx() { return vx; }
         public float vy() { return vy; }
         public int hyperspaceAttempts() { return hyperspaceAttempts; }
+        public int score() { return score; }
         public String playerName() { return playerName; }
         public boolean localPlayer() { return localPlayer; }
+    }
+
+    public static final class StarState {
+        private final float x;
+        private final float y;
+        private final float radius;
+
+        public StarState(float x, float y, float radius) {
+            this.x = x;
+            this.y = y;
+            this.radius = radius;
+        }
+
+        public float x() { return x; }
+        public float y() { return y; }
+        public float radius() { return radius; }
     }
 
     public static final class ExplosionState {
@@ -148,15 +167,17 @@ public final class RemoteSnapshot {
     private final List<BulletState> bullets;
     private final List<AsteroidState> asteroids;
     private final List<ExplosionState> explosions;
+    private final StarState star;
 
     public RemoteSnapshot(long tick, List<PlayerState> players,
                           List<BulletState> bullets, List<AsteroidState> asteroids,
-                          List<ExplosionState> explosions) {
+                          List<ExplosionState> explosions, StarState star) {
         this.tick = tick;
         this.players = Collections.unmodifiableList(new ArrayList<>(players));
         this.bullets = Collections.unmodifiableList(new ArrayList<>(bullets));
         this.asteroids = Collections.unmodifiableList(new ArrayList<>(asteroids));
         this.explosions = Collections.unmodifiableList(new ArrayList<>(explosions));
+        this.star = star;
     }
 
     public long tick() { return tick; }
@@ -164,4 +185,5 @@ public final class RemoteSnapshot {
     public List<BulletState> bullets() { return bullets; }
     public List<AsteroidState> asteroids() { return asteroids; }
     public List<ExplosionState> explosions() { return explosions; }
+    public StarState star() { return star; }
 }

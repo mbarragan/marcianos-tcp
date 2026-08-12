@@ -14,14 +14,17 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import marcianos.Asteroid;
 import marcianos.Bullet;
 import marcianos.InputCommand;
 import marcianos.PlayerManager;
 import marcianos.ShipExplosionSink;
+import marcianos.Star;
 
 /** Lightweight TCP server used to validate online simulation with desktop rules. */
 public final class LocalTcpGameServer {
@@ -30,6 +33,8 @@ public final class LocalTcpGameServer {
     private static final float BULLET_HIT_DISTANCE = 18f;
     private static final float ASTEROID_APPEARANCE_TIME = 10f;
     private static final float ASTEROID_SPAWN_INTERVAL = 20f;
+    private static final float STAR_APPEARANCE_TIME = 30f;
+    private static final float STAR_MASS_INTERVAL = 9f;
     private static final Map<Integer, LocalTcpGameServer> RUNNING = new ConcurrentHashMap<>();
 
     public static synchronized void startIfNeeded(int port) throws IOException {
@@ -55,6 +60,7 @@ public final class LocalTcpGameServer {
     private final Map<Integer, ServerPlayerState> players = new HashMap<>();
     private final List<Asteroid> asteroids = new ArrayList<>();
     private final List<TcpProtocol.SnapshotExplosion> pendingExplosions = new ArrayList<>();
+    private final Set<Long> activeShipCollisions = new HashSet<>();
     private final ShipExplosionSink explosionSink = new ShipExplosionSink() {
         @Override public void addShipExplosion(float x, float y, Color color, float angle,
                                                Vector2 velocity, boolean slowFragments) {
@@ -82,6 +88,8 @@ public final class LocalTcpGameServer {
     private long tick;
     private float elapsedTime;
     private float nextAsteroidAppearanceTime = ASTEROID_APPEARANCE_TIME;
+    private float nextStarMassIncreaseTime = STAR_APPEARANCE_TIME + STAR_MASS_INTERVAL;
+    private Star star;
 
     private LocalTcpGameServer(String bindHost, int port) {
         this.bindHost = bindHost == null ? "" : bindHost.trim();
@@ -102,6 +110,9 @@ public final class LocalTcpGameServer {
             tick = 0L;
             elapsedTime = 0f;
             nextAsteroidAppearanceTime = ASTEROID_APPEARANCE_TIME;
+            nextStarMassIncreaseTime = STAR_APPEARANCE_TIME + STAR_MASS_INTERVAL;
+            activeShipCollisions.clear();
+            star = null;
         }
         running = true;
 
@@ -138,6 +149,8 @@ public final class LocalTcpGameServer {
             players.clear();
             asteroids.clear();
             pendingExplosions.clear();
+            activeShipCollisions.clear();
+            star = null;
         }
     }
 
@@ -181,11 +194,25 @@ public final class LocalTcpGameServer {
                 asteroids.add(new Asteroid());
                 nextAsteroidAppearanceTime += ASTEROID_SPAWN_INTERVAL;
             }
+            if (star == null && elapsedTime >= STAR_APPEARANCE_TIME) {
+                star = new Star(marcianos.GameScreen.WORLD_WIDTH / 2f, marcianos.GameScreen.WORLD_HEIGHT / 2f);
+            }
+            if (star != null) {
+                while (elapsedTime >= nextStarMassIncreaseTime) {
+                    star.increaseMass();
+                    nextStarMassIncreaseTime += STAR_MASS_INTERVAL;
+                }
+            }
 
             List<ServerPlayerState> orderedPlayers = orderedPlayers();
             for (ServerPlayerState serverPlayer : orderedPlayers) {
                 serverPlayer.player.setExternalInput(toInputCommand(serverPlayer.input));
                 serverPlayer.player.update(delta, null);
+            }
+            if (star != null) {
+                for (ServerPlayerState serverPlayer : orderedPlayers) {
+                    if (serverPlayer.player.isAlive()) star.applyGravity(serverPlayer.player, delta);
+                }
             }
             for (Asteroid asteroid : asteroids) asteroid.update(delta);
 
@@ -198,6 +225,15 @@ public final class LocalTcpGameServer {
             }
             for (ServerPlayerState serverPlayer : orderedPlayers) {
                 checkAsteroidPlayerCollisions(serverPlayer);
+                checkStarPlayerCollisions(serverPlayer);
+            }
+            for (ServerPlayerState serverPlayer : orderedPlayers) {
+                if (!serverPlayer.player.isAlive() && serverPlayer.player.getLives() == 0) {
+                    serverPlayer.player.resetForOnlineRespawn(4);
+                    serverPlayer.player.setExternalInput(InputCommand.none());
+                    serverPlayer.input = TcpProtocol.emptyInput();
+                    serverPlayer.touchingStar = false;
+                }
             }
         }
     }
@@ -224,18 +260,29 @@ public final class LocalTcpGameServer {
     }
 
     private void checkPlayerCollision(List<ServerPlayerState> orderedPlayers) {
+        Set<Long> newCollisions = new HashSet<>();
         for (int i = 0; i < orderedPlayers.size(); i++) {
-            PlayerManager playerOne = orderedPlayers.get(i).player;
+            ServerPlayerState stateOne = orderedPlayers.get(i);
+            PlayerManager playerOne = stateOne.player;
             if (!playerOne.isAlive()) continue;
             for (int j = i + 1; j < orderedPlayers.size(); j++) {
-                PlayerManager playerTwo = orderedPlayers.get(j).player;
+                ServerPlayerState stateTwo = orderedPlayers.get(j);
+                PlayerManager playerTwo = stateTwo.player;
                 if (!playerTwo.isAlive()) continue;
                 if (playerOne.getPosition().dst(playerTwo.getPosition()) < SHIP_COLLISION_DISTANCE) {
-                    playerOne.hit(playerTwo.getPosition().x, playerTwo.getPosition().y, 16f, explosionSink);
-                    playerTwo.hit(playerOne.getPosition().x, playerOne.getPosition().y, 16f, explosionSink);
+                    long pairKey = collisionPairKey(stateOne.playerId, stateTwo.playerId);
+                    newCollisions.add(pairKey);
+                    if (!activeShipCollisions.contains(pairKey)) {
+                        adjustScore(stateOne, -1);
+                        adjustScore(stateTwo, -1);
+                        playerOne.hit(playerTwo.getPosition().x, playerTwo.getPosition().y, 16f, explosionSink);
+                        playerTwo.hit(playerOne.getPosition().x, playerOne.getPosition().y, 16f, explosionSink);
+                    }
                 }
             }
         }
+        activeShipCollisions.clear();
+        activeShipCollisions.addAll(newCollisions);
     }
 
     private void checkBulletPlayerCollisions(ServerPlayerState shooterState,
@@ -247,7 +294,9 @@ public final class LocalTcpGameServer {
                 if (targetState.playerId == shooterState.playerId) continue;
                 PlayerManager target = targetState.player;
                 if (target.isAlive() && bullet.getPosition().dst(target.getPosition()) < BULLET_HIT_DISTANCE) {
-                    target.hit(target.getPosition().x, target.getPosition().y, 2f, explosionSink);
+                    boolean killed = target.hit(target.getPosition().x, target.getPosition().y, 2f, explosionSink);
+                    adjustScore(targetState, -1);
+                    if (killed) adjustScore(shooterState, 1);
                     shooter.destroyBullet(bullet);
                     break;
                 }
@@ -279,9 +328,39 @@ public final class LocalTcpGameServer {
             if (player.getPosition().dst(asteroid.getPosition()) <= collisionDistance) {
                 player.hit(asteroid.getPosition().x, asteroid.getPosition().y,
                     asteroid.getRadius(), explosionSink);
+                adjustScore(serverPlayer, -1);
                 replaceAsteroid(asteroidIndex, asteroid);
             }
         }
+    }
+
+    private void checkStarPlayerCollisions(ServerPlayerState serverPlayer) {
+        if (star == null) {
+            serverPlayer.touchingStar = false;
+            return;
+        }
+        PlayerManager player = serverPlayer.player;
+        if (!player.isAlive()) {
+            serverPlayer.touchingStar = false;
+            return;
+        }
+        float collisionDistance = star.getRadius() + 16f;
+        boolean colliding = player.getPosition().dst(star.getX(), star.getY()) <= collisionDistance;
+        if (colliding && !serverPlayer.touchingStar) {
+            player.hit(star.getX(), star.getY(), star.getRadius(), explosionSink, true);
+            adjustScore(serverPlayer, -1);
+        }
+        serverPlayer.touchingStar = colliding;
+    }
+
+    private static long collisionPairKey(int playerOneId, int playerTwoId) {
+        int low = Math.min(playerOneId, playerTwoId);
+        int high = Math.max(playerOneId, playerTwoId);
+        return (((long) low) << 32) | (high & 0xffffffffL);
+    }
+
+    private static void adjustScore(ServerPlayerState state, int delta) {
+        state.score += delta;
     }
 
     private void replaceAsteroid(int index, Asteroid asteroid) {
@@ -332,7 +411,8 @@ public final class LocalTcpGameServer {
                     velocity.x,
                     velocity.y,
                     player.getHyperspaceAttempts(),
-                    p.playerName));
+                    p.playerName,
+                    p.score));
                 for (Bullet bullet : player.getBullets()) {
                     bullets.add(new TcpProtocol.SnapshotBullet(
                         p.playerId,
@@ -352,7 +432,14 @@ public final class LocalTcpGameServer {
             pendingExplosions.clear();
         }
 
-        String line = TcpProtocol.snapshotMessage(tick, frame, bullets, asteroidFrame, explosionFrame);
+        TcpProtocol.SnapshotStar starFrame = null;
+        synchronized (players) {
+            if (star != null) {
+                starFrame = new TcpProtocol.SnapshotStar(star.getX(), star.getY(), star.getRadius());
+            }
+        }
+
+        String line = TcpProtocol.snapshotMessage(tick, frame, bullets, asteroidFrame, explosionFrame, starFrame);
         synchronized (clients) {
             for (ClientConnection client : clients) client.send(line);
         }
@@ -438,6 +525,7 @@ public final class LocalTcpGameServer {
                 state.player.resetForOnlineRespawn(4);
                 state.player.setExternalInput(InputCommand.none());
                 state.input = TcpProtocol.emptyInput();
+                state.touchingStar = false;
             }
         }
 
@@ -460,12 +548,16 @@ public final class LocalTcpGameServer {
         private final String playerName;
         private final PlayerManager player;
         private TcpProtocol.ParsedInput input = TcpProtocol.emptyInput();
+        private int score;
+        private boolean touchingStar;
 
         private ServerPlayerState(int playerId, String playerName) {
             this.playerId = playerId;
             this.playerName = playerName;
             this.player = new PlayerManager(colorFor(playerId), 0, 0, 0, 0, 0, 0, 4);
             this.player.setExternalInput(InputCommand.none());
+            this.score = 0;
+            this.touchingStar = false;
         }
 
         private static Color colorFor(int playerId) {

@@ -74,7 +74,7 @@ public final class TcpProtocol {
     }
 
     public static RemoteSnapshot parseSnapshot(String line, int localPlayerId) {
-        String[] parts = line.split("\\|", 6);
+        String[] parts = line.split("\\|", 7);
         if (parts.length < 2 || !SNAP.equals(parts[0])) return null;
 
         long tick;
@@ -88,7 +88,7 @@ public final class TcpProtocol {
         if (parts.length >= 3 && !parts[2].trim().isEmpty()) {
             String[] entries = parts[2].split(";");
             for (String entry : entries) {
-                String[] p = entry.split(",", 12);
+                String[] p = entry.split(",", 13);
                 if (p.length < 5) continue;
                 try {
                     int id = Integer.parseInt(p[0]);
@@ -102,6 +102,7 @@ public final class TcpProtocol {
                     float vx = 0f;
                     float vy = 0f;
                     int hyperspaceAttempts = 0;
+                    int score = 0;
                     String playerName = "P" + id;
                     if (p.length == 6) {
                         // Legacy payload: id,x,y,angle,shield,shieldActive
@@ -115,10 +116,11 @@ public final class TcpProtocol {
                         if (p.length >= 10) vy = Float.parseFloat(p[9]);
                         if (p.length >= 11) hyperspaceAttempts = Integer.parseInt(p[10]);
                         if (p.length >= 12 && !p[11].isEmpty()) playerName = p[11];
+                        if (p.length >= 13) score = Integer.parseInt(p[12]);
                     }
                     players.add(new RemoteSnapshot.PlayerState(
                         id, x, y, angle, shield, lives, shieldActive,
-                        alive, vx, vy, hyperspaceAttempts, playerName, id == localPlayerId));
+                        alive, vx, vy, hyperspaceAttempts, score, playerName, id == localPlayerId));
                 } catch (RuntimeException ignored) {
                 }
             }
@@ -188,13 +190,28 @@ public final class TcpProtocol {
             }
         }
 
-        return new RemoteSnapshot(tick, players, bullets, asteroids, explosions);
+        RemoteSnapshot.StarState star = null;
+        if (parts.length >= 7 && !parts[6].trim().isEmpty()) {
+            String[] s = parts[6].split(",", 3);
+            if (s.length == 3) {
+                try {
+                    star = new RemoteSnapshot.StarState(
+                        Float.parseFloat(s[0]),
+                        Float.parseFloat(s[1]),
+                        Float.parseFloat(s[2]));
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+
+        return new RemoteSnapshot(tick, players, bullets, asteroids, explosions, star);
     }
 
     public static String snapshotMessage(long tick, List<SnapshotPlayer> players,
                                          List<SnapshotBullet> bullets,
                                          List<SnapshotAsteroid> asteroids,
-                                         List<SnapshotExplosion> explosions) {
+                                         List<SnapshotExplosion> explosions,
+                                         SnapshotStar star) {
         StringBuilder sb = new StringBuilder();
         sb.append(SNAP).append('|').append(tick).append('|');
         for (int i = 0; i < players.size(); i++) {
@@ -211,7 +228,8 @@ public final class TcpProtocol {
                 .append(format(p.vx)).append(',')
                 .append(format(p.vy)).append(',')
                 .append(p.hyperspaceAttempts).append(',')
-                .append(sanitizeName(p.playerName));
+                .append(sanitizeName(p.playerName)).append(',')
+                .append(p.score);
         }
 
         sb.append('|');
@@ -255,6 +273,13 @@ public final class TcpProtocol {
                 .append(format(e.radius)).append(',')
                 .append(bit(e.slowFragments));
         }
+
+            sb.append('|');
+            if (star != null) {
+                sb.append(format(star.x)).append(',')
+                .append(format(star.y)).append(',')
+                .append(format(star.radius));
+            }
         return sb.toString();
     }
 
@@ -317,11 +342,12 @@ public final class TcpProtocol {
         public final float vy;
         public final int hyperspaceAttempts;
         public final String playerName;
+        public final int score;
 
         public SnapshotPlayer(int playerId, float x, float y, float angle,
                               float shield, int lives, boolean shieldActive,
                       boolean alive, float vx, float vy,
-                  int hyperspaceAttempts, String playerName) {
+                  int hyperspaceAttempts, String playerName, int score) {
             this.playerId = playerId;
             this.x = x;
             this.y = y;
@@ -334,6 +360,19 @@ public final class TcpProtocol {
             this.vy = vy;
             this.hyperspaceAttempts = hyperspaceAttempts;
             this.playerName = sanitizeName(playerName);
+            this.score = score;
+        }
+    }
+
+    public static final class SnapshotStar {
+        public final float x;
+        public final float y;
+        public final float radius;
+
+        public SnapshotStar(float x, float y, float radius) {
+            this.x = x;
+            this.y = y;
+            this.radius = radius;
         }
     }
 

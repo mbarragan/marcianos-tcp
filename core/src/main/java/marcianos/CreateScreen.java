@@ -8,7 +8,6 @@ import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
-import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 
 /** Create screen for host-mode stub session setup. */
@@ -125,7 +124,7 @@ public final class CreateScreen extends ScreenAdapter {
             final String[] value = new String[1];
             SwingUtilities.invokeAndWait(new Runnable() {
                 @Override public void run() {
-                    value[0] = JOptionPane.showInputDialog(null, title, text);
+                    value[0] = SwingTextInputDialog.show(title, text);
                 }
             });
             if (value[0] == null) listener.canceled();
