@@ -35,6 +35,9 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
     private static final float ASTEROID_SPAWN_INTERVAL = 20f;
     private static final float ONE_PLAYER_ASTEROID_APPEARANCE_TIME = 5f;
     private static final float ONE_PLAYER_ASTEROID_SPAWN_INTERVAL = 10f;
+    private static final float ONE_PLAYER_ENEMY_APPEARANCE_TIME = 10f;
+    private static final float ONE_PLAYER_ENEMY_RESPAWN_DELAY = 60f;
+    private static final float ONE_PLAYER_ENEMY_RESPAWN_DELAY_MIN = 20f;
     
     private static final float STAR_APPEARANCE_TIME = 30f;
     private static final float STAR_MASS_INTERVAL = 20f;
@@ -52,12 +55,14 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
     private final Array<ExplosionEffect> explosions = new Array<>();
     private final Array<Asteroid> asteroids = new Array<>();
     private final Array<Vector2> stars = new Array<>();
+    private Enemy enemy;
     private Star star;
     private int scoreOne;
     private boolean awardedLifeAt10000;
     private boolean awardedLifeAt100000;
     private float elapsedTime;
     private float nextAsteroidAppearanceTime = ASTEROID_APPEARANCE_TIME;
+    private float nextEnemyAppearanceTime = ONE_PLAYER_ENEMY_APPEARANCE_TIME;
     private float nextStarMassIncreaseTime = STAR_APPEARANCE_TIME + STAR_MASS_INTERVAL;
     private boolean starAppeared;
     private boolean gameStarted;
@@ -107,6 +112,7 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
         createInitialAsteroids();
         nextAsteroidAppearanceTime = gameMode == GameMode.ONE_PLAYER
             ? ONE_PLAYER_ASTEROID_APPEARANCE_TIME : ASTEROID_APPEARANCE_TIME;
+        nextEnemyAppearanceTime = ONE_PLAYER_ENEMY_APPEARANCE_TIME;
         gameStarted = startImmediately;
     }
 
@@ -123,6 +129,10 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
         float frameDelta = Math.min(Gdx.graphics.getDeltaTime(), 1f / 30f);
         if (gameStarted && !gameOver) {
             elapsedTime += frameDelta;
+            if (gameMode == GameMode.ONE_PLAYER && enemy == null
+                    && elapsedTime >= nextEnemyAppearanceTime) {
+                enemy = new Enemy();
+            }
             if (elapsedTime >= nextAsteroidAppearanceTime) {
                 asteroids.add(new Asteroid());
                 nextAsteroidAppearanceTime += gameMode == GameMode.ONE_PLAYER
@@ -159,6 +169,7 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
         playerOne.draw(renderer);
         if (playerTwo != null) playerTwo.draw(renderer);
         for (Asteroid asteroid : asteroids) asteroid.draw(renderer);
+        if (enemy != null) enemy.draw(renderer);
         if (star != null) star.draw(renderer);
         for (ExplosionEffect explosion : explosions) explosion.draw(renderer);
         renderer.end();
@@ -190,15 +201,22 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
         playerOne.update(delta, this);
         if (playerTwo != null) playerTwo.update(delta, this);
         for (Asteroid asteroid : asteroids) asteroid.update(delta);
+        if (enemy != null) enemy.update(delta);
         if (playerTwo != null) {
             checkBulletCollisions(playerOne, playerTwo);
             checkBulletCollisions(playerTwo, playerOne);
         }
         checkAsteroidCollisions(playerOne);
+        checkEnemyCollisions(playerOne);
+        checkEnemyBulletCollisions(playerOne);
+        checkEnemyPlayerCollisions(playerOne);
         checkAsteroidPlayerCollisions(playerOne);
         checkStarPlayerCollisions(playerOne);
         if (playerTwo != null) {
             checkAsteroidCollisions(playerTwo);
+            checkEnemyCollisions(playerTwo);
+            checkEnemyBulletCollisions(playerTwo);
+            checkEnemyPlayerCollisions(playerTwo);
             checkAsteroidPlayerCollisions(playerTwo);
             checkStarPlayerCollisions(playerTwo);
         }
@@ -305,6 +323,49 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
         }
     }
 
+    private void checkEnemyCollisions(PlayerManager shooter) {
+        if (enemy == null) return;
+        for (int bulletIndex = shooter.getBullets().size - 1; bulletIndex >= 0; bulletIndex--) {
+            Bullet bullet = shooter.getBullets().get(bulletIndex);
+            if (bullet.getPosition().dst(enemy.getPosition()) <= enemy.getRadius() + 3f) {
+                shooter.destroyBullet(bullet);
+                addEnemyExplosion(enemy);
+                enemy = null;
+                nextEnemyAppearanceTime = elapsedTime + calculateEnemyRespawnDelay();
+                return;
+            }
+        }
+    }
+
+    private void checkEnemyBulletCollisions(PlayerManager target) {
+        if (enemy == null || !target.isAlive()) return;
+        for (int bulletIndex = enemy.getBullets().size - 1; bulletIndex >= 0; bulletIndex--) {
+            Bullet bullet = enemy.getBullets().get(bulletIndex);
+            if (bullet.getPosition().dst(target.getPosition()) < 18f) {
+                target.hit(target.getPosition().x, target.getPosition().y, 2f, this);
+                enemy.destroyBullet(bullet);
+            }
+        }
+    }
+
+    private void checkEnemyPlayerCollisions(PlayerManager target) {
+        if (enemy == null || !target.isAlive()) return;
+        if (target.getPosition().dst(enemy.getPosition()) <= enemy.getRadius() + 16f) {
+            target.hit(enemy.getPosition().x, enemy.getPosition().y, enemy.getRadius(), this);
+            addEnemyExplosion(enemy);
+            enemy = null;
+            nextEnemyAppearanceTime = elapsedTime + calculateEnemyRespawnDelay();
+        }
+    }
+
+    private float calculateEnemyRespawnDelay() {
+        // Difficulty scales with both survival time and score progression.
+        float timeReduction = Math.min(20f, elapsedTime / 30f * 2f);
+        float scoreReduction = Math.min(20f, scoreOne / 1500f);
+        return Math.max(ONE_PLAYER_ENEMY_RESPAWN_DELAY_MIN,
+            ONE_PLAYER_ENEMY_RESPAWN_DELAY - timeReduction - scoreReduction);
+    }
+
     private void addScore(PlayerManager shooter, Asteroid asteroid) {
         if (shooter == playerOne) {
             if (asteroid.getRadius() <= 23f) scoreOne += 100;
@@ -357,6 +418,14 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
         Vector2 velocity = asteroid.getVelocity();
         explosions.add(new ExplosionEffect(position.x, position.y, Color.GRAY,
             asteroid.getRotation(), velocity.x, velocity.y, 2f, 8, asteroid.getRadius()));
+    }
+
+    private void addEnemyExplosion(Enemy target) {
+        Vector2 position = target.getPosition();
+        Vector2 velocity = target.getVelocity();
+        explosions.add(new ExplosionEffect(position.x, position.y, Color.GREEN,
+            target.getAngle() + 90f, velocity.x, velocity.y,
+            2.5f, target.getExplosionSegmentsX(), target.getExplosionSegmentsY(), 1f));
     }
 
     public void addShipExplosion(float x, float y, Color color, float angle,
@@ -535,7 +604,9 @@ public final class GameScreen extends ScreenAdapter implements ShipExplosionSink
         elapsedTime = 0f;
         nextAsteroidAppearanceTime = gameMode == GameMode.ONE_PLAYER
             ? ONE_PLAYER_ASTEROID_APPEARANCE_TIME : ASTEROID_APPEARANCE_TIME;
+        nextEnemyAppearanceTime = ONE_PLAYER_ENEMY_APPEARANCE_TIME;
         nextStarMassIncreaseTime = STAR_APPEARANCE_TIME + STAR_MASS_INTERVAL;
+        enemy = null;
         star = null;
         starAppeared = false;
         gameOver = false;

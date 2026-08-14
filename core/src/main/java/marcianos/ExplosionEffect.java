@@ -38,8 +38,8 @@ public final class ExplosionEffect {
         initialize(x, y, color, theta, vx, vy, duration, px, py, 1f);
     }
 
-    private ExplosionEffect(float x, float y, Color color, float theta, float vx, float vy,
-                            float duration, int[][] px, int[][] py, float shardSpeedMultiplier) {
+    public ExplosionEffect(float x, float y, Color color, float theta, float vx, float vy,
+                           float duration, int[][] px, int[][] py, float shardSpeedMultiplier) {
         initialize(x, y, color, theta, vx, vy, duration, px, py, shardSpeedMultiplier);
     }
 
