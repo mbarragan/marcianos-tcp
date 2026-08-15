@@ -8,7 +8,7 @@ import com.badlogic.gdx.math.Vector2;
 public final class Star {
     private static final float INITIAL_MASS = 10000f;
     private static final float MASS_INCREMENT = 1000f;
-    private static final int MAX_MASS_INCREMENTS = 20;
+    private static final int MAX_MASS_INCREMENTS = 30;
     private static final float GRAVITATIONAL_CONSTANT = 100f;
     private static final float RADIUS = 21f;
     private static final float ASTERISK_RADIUS = 17f;
